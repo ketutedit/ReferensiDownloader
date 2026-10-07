@@ -17,11 +17,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract source bundle
+      - name: Reconstruct and extract source bundle
         shell: pwsh
         run: |
+          $bad = [IO.File]::ReadAllBytes("source/ReferensiDownloader-v2.3-GitHub-WindowsBuilder.zip")
+          $midB64 = (Get-Content "source/missing-middle.b64" -Raw).Trim()
+          $mid = [Convert]::FromBase64String($midB64)
+          if ($mid.Length -ne 6000) { throw "Unexpected middle chunk length: $($mid.Length)" }
+          $split = 24000
+          $fixed = New-Object byte[] ($bad.Length + $mid.Length)
+          [Array]::Copy($bad, 0, $fixed, 0, $split)
+          [Array]::Copy($mid, 0, $fixed, $split, $mid.Length)
+          [Array]::Copy($bad, $split, $fixed, $split + $mid.Length, $bad.Length - $split)
+          [IO.File]::WriteAllBytes(".ci-source.zip", $fixed)
           New-Item -ItemType Directory -Force -Path .ci-src | Out-Null
-          Expand-Archive -Path source/ReferensiDownloader-v2.3-GitHub-WindowsBuilder.zip -DestinationPath .ci-src -Force
+          Expand-Archive -Path .ci-source.zip -DestinationPath .ci-src -Force
 
       - name: Set up Python 3.12 x64
         uses: actions/setup-python@v5
