@@ -32,14 +32,13 @@ jobs:
           [IO.File]::WriteAllBytes(".ci-source.zip", $fixed)
           New-Item -ItemType Directory -Force -Path .ci-src | Out-Null
           Expand-Archive -Path .ci-source.zip -DestinationPath .ci-src -Force
+          Get-ChildItem .ci-src -Recurse -Depth 2 | Select-Object FullName
 
       - name: Set up Python 3.12 x64
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           architecture: 'x64'
-          cache: 'pip'
-          cache-dependency-path: .ci-src/ReferensiDownloader_v2.3/requirements.txt
 
       - name: Build Windows portable + installer
         shell: pwsh
