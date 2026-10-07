@@ -17,19 +17,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reconstruct and extract source bundle
+      - name: Reconstruct source bundle
         shell: pwsh
         run: |
-          $bad = [IO.File]::ReadAllBytes("source/ReferensiDownloader-v2.3-GitHub-WindowsBuilder.zip")
-          $midB64 = (Get-Content "source/missing-middle.b64" -Raw).Trim()
-          $mid = [Convert]::FromBase64String($midB64)
-          if ($mid.Length -ne 6000) { throw "Unexpected middle chunk length: $($mid.Length)" }
-          $split = 24000
-          $fixed = New-Object byte[] ($bad.Length + $mid.Length)
-          [Array]::Copy($bad, 0, $fixed, 0, $split)
-          [Array]::Copy($mid, 0, $fixed, $split, $mid.Length)
-          [Array]::Copy($bad, $split, $fixed, $split + $mid.Length, $bad.Length - $split)
-          [IO.File]::WriteAllBytes(".ci-source.zip", $fixed)
+          $parts = Get-ChildItem "source/chunks/part*.b64" | Sort-Object Name
+          if ($parts.Count -ne 7) { throw "Expected 7 source chunks, found $($parts.Count)" }
+          $b64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ""
+          $bytes = [Convert]::FromBase64String($b64)
+          [IO.File]::WriteAllBytes(".ci-source.zip", $bytes)
+          $hash = (Get-FileHash ".ci-source.zip" -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "236d70e4680e87c53c62c5db15ee96d7d56320578d065db4c421051fc6f35216") {
+            throw "Source bundle SHA256 mismatch: $hash"
+          }
           New-Item -ItemType Directory -Force -Path .ci-src | Out-Null
           Expand-Archive -Path .ci-source.zip -DestinationPath .ci-src -Force
           $buildScript = Get-ChildItem .ci-src -Recurse -Filter build_windows.ps1 | Select-Object -First 1
