@@ -20,9 +20,17 @@ jobs:
       - name: Reconstruct source bundle
         shell: pwsh
         run: |
-          $parts = Get-ChildItem "source/chunks/part*.b64" | Sort-Object Name
-          if ($parts.Count -ne 7) { throw "Expected 7 source chunks, found $($parts.Count)" }
-          $b64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ""
+          $names = @(
+            "part00a.b64", "part00b.b64",
+            "part01.b64", "part02.b64", "part03.b64",
+            "part04.b64", "part05.b64", "part06.b64"
+          )
+          $b64 = ""
+          foreach ($name in $names) {
+            $path = Join-Path "source/chunks" $name
+            if (-not (Test-Path $path)) { throw "Missing source chunk: $path" }
+            $b64 += (Get-Content $path -Raw).Trim()
+          }
           $bytes = [Convert]::FromBase64String($b64)
           [IO.File]::WriteAllBytes(".ci-source.zip", $bytes)
           $hash = (Get-FileHash ".ci-source.zip" -Algorithm SHA256).Hash.ToLower()
