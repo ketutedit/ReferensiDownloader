@@ -32,7 +32,10 @@ jobs:
           [IO.File]::WriteAllBytes(".ci-source.zip", $fixed)
           New-Item -ItemType Directory -Force -Path .ci-src | Out-Null
           Expand-Archive -Path .ci-source.zip -DestinationPath .ci-src -Force
-          Get-ChildItem .ci-src -Recurse -Depth 2 | Select-Object FullName
+          $buildScript = Get-ChildItem .ci-src -Recurse -Filter build_windows.ps1 | Select-Object -First 1
+          if (-not $buildScript) { throw "build_windows.ps1 not found after extraction" }
+          "SOURCE_ROOT=$($buildScript.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Source root: $($buildScript.Directory.FullName)"
 
       - name: Set up Python 3.12 x64
         uses: actions/setup-python@v5
@@ -42,8 +45,14 @@ jobs:
 
       - name: Build Windows portable + installer
         shell: pwsh
-        working-directory: .ci-src/ReferensiDownloader_v2.3
-        run: .\build_windows.ps1
+        run: |
+          Set-Location $env:SOURCE_ROOT
+          .\build_windows.ps1
+          $artifactDir = Join-Path $env:GITHUB_WORKSPACE ".ci-artifacts"
+          New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+          Copy-Item ".\dist\ReferensiDownloader-Windows-x64-Portable.zip" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Portable.zip") -Force
+          Copy-Item ".\dist\installer\ReferensiDownloader-Windows-x64-Setup.exe" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Setup.exe") -Force
+          Get-ChildItem $artifactDir | Format-Table Name,Length
 
       - name: Upload Windows build artifact
         uses: actions/upload-artifact@v4
@@ -51,14 +60,10 @@ jobs:
           name: ReferensiDownloader-Windows-x64
           if-no-files-found: error
           retention-days: 30
-          path: |
-            .ci-src/ReferensiDownloader_v2.3/dist/ReferensiDownloader-Windows-x64-Portable.zip
-            .ci-src/ReferensiDownloader_v2.3/dist/installer/ReferensiDownloader-Windows-x64-Setup.exe
+          path: .ci-artifacts/*
 
       - name: Attach files to GitHub Release for version tags
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            .ci-src/ReferensiDownloader_v2.3/dist/ReferensiDownloader-Windows-x64-Portable.zip
-            .ci-src/ReferensiDownloader_v2.3/dist/installer/ReferensiDownloader-Windows-x64-Setup.exe
+          files: .ci-artifacts/*
