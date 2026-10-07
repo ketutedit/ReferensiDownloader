@@ -55,7 +55,7 @@ jobs:
         run: |
           Set-Location $env:SOURCE_ROOT
           .\build_windows.ps1
-          $artifactDir = Join-Path $env:GITHUB_WORKSPACE ".ci-artifacts"
+          $artifactDir = Join-Path $env:GITHUB_WORKSPACE "ci-artifacts"
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
           Copy-Item ".\dist\ReferensiDownloader-Windows-x64-Portable.zip" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Portable.zip") -Force
           Copy-Item ".\dist\installer\ReferensiDownloader-Windows-x64-Setup.exe" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Setup.exe") -Force
@@ -67,10 +67,10 @@ jobs:
           name: ReferensiDownloader-Windows-x64
           if-no-files-found: error
           retention-days: 30
-          path: .ci-artifacts/*
+          path: ci-artifacts/*
 
       - name: Attach files to GitHub Release for version tags
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: .ci-artifacts/*
+          files: ci-artifacts/*
