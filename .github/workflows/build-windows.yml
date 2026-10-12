@@ -69,6 +69,22 @@ jobs:
           retention-days: 30
           path: ci-artifacts/*
 
+      - name: Publish direct Windows downloads
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-latest
+          target_commitish: ${{ github.sha }}
+          name: Referensi Downloader — Windows x64 (Latest)
+          body: |
+            Automated Windows x64 build of Referensi Downloader v2.3.
+
+            Download the Setup.exe asset for the installer, or the Portable.zip asset for the portable build.
+            The installer is provided directly as an EXE so it does not need to be extracted from the GitHub Actions artifact ZIP.
+          prerelease: true
+          overwrite_files: true
+          files: ci-artifacts/*
+
       - name: Attach files to GitHub Release for version tags
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
