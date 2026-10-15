@@ -50,13 +50,9 @@ jobs:
           $core = Join-Path $env:SOURCE_ROOT "core.py"
           if (-not (Test-Path $core)) { throw "core.py not found: $core" }
           $lines = Get-Content $core
-          Write-Host "=== core.py lines 990-1100 (complete FFmpeg conversion path) ==="
-          for ($n = 989; $n -lt [Math]::Min(1100, $lines.Length); $n++) {
+          Write-Host "=== core.py lines 990-1170 (complete FFmpeg conversion path) ==="
+          for ($n = 989; $n -lt [Math]::Min(1170, $lines.Length); $n++) {
             Write-Host ("{0}: {1}" -f ($n + 1), $lines[$n])
-          }
-          Write-Host "=== Smart Editing wrappers ==="
-          foreach ($file in (Get-ChildItem $env:SOURCE_ROOT -Recurse -Filter *.py)) {
-            Select-String -Path $file.FullName -Pattern "clean_error\(|_smart_finalize_editor_mp4|Pemrosesan Smart Editing MP4 gagal" -Context 2,3 | ForEach-Object { Write-Host $_.ToString() }
           }
 
       - name: Set up Python 3.12 x64
