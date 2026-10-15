@@ -44,6 +44,29 @@ jobs:
           "SOURCE_ROOT=$($buildScript.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Source root: $($buildScript.Directory.FullName)"
 
+      - name: Inspect Smart Editing conversion code
+        shell: pwsh
+        run: |
+          Write-Host "=== Python source files ==="
+          Get-ChildItem $env:SOURCE_ROOT -Recurse -Filter *.py | Select-Object -ExpandProperty FullName
+          $patterns = @(
+            "Terjadi error yang tidak diketahui",
+            "Smart Editing MP4 gagal",
+            "Pemrosesan Smart Editing",
+            "Smart Editing MP4",
+            "h264_videotoolbox",
+            "libx264",
+            "subprocess.run",
+            "ffprobe"
+          )
+          foreach ($file in (Get-ChildItem $env:SOURCE_ROOT -Recurse -Filter *.py)) {
+            $matches = Select-String -Path $file.FullName -Pattern $patterns -Context 3,5
+            if ($matches) {
+              Write-Host "=== $($file.FullName) ==="
+              foreach ($match in $matches) { Write-Host $match.ToString(); foreach($line in $match.Context.PreContext){Write-Host $line}; Write-Host $match.Line; foreach($line in $match.Context.PostContext){Write-Host $line}; Write-Host "---" }
+            }
+          }
+
       - name: Set up Python 3.12 x64
         uses: actions/setup-python@v5
         with:
