@@ -1,0 +1,73 @@
+name: Inspect Windows Smart Editing source
+
+on:
+  push:
+    branches: [inspect-smart-editing]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct source bundle
+        shell: pwsh
+        run: |
+          $names = @(
+            "part00a.b64", "part00b.b64",
+            "part01.b64", "part02.b64", "part03.b64",
+            "part04.b64", "part05.b64", "part06.b64"
+          )
+          $b64 = ""
+          foreach ($name in $names) {
+            $path = Join-Path "source/chunks" $name
+            if (-not (Test-Path $path)) { throw "Missing source chunk: $path" }
+            $b64 += (Get-Content $path -Raw).Trim()
+          }
+          $bytes = [Convert]::FromBase64String($b64)
+          [IO.File]::WriteAllBytes(".ci-source.zip", $bytes)
+          $hash = (Get-FileHash ".ci-source.zip" -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "236d70e4680e87c53c62c5db15ee96d7d56320578d065db4c421051fc6f35216") {
+            throw "Source bundle SHA256 mismatch: $hash"
+          }
+          New-Item -ItemType Directory -Force -Path .ci-src | Out-Null
+          Expand-Archive -Path .ci-source.zip -DestinationPath .ci-src -Force
+          $buildScript = Get-ChildItem .ci-src -Recurse -Filter build_windows.ps1 | Select-Object -First 1
+          if (-not $buildScript) { throw "build_windows.ps1 not found after extraction" }
+          "SOURCE_ROOT=$($buildScript.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Source root: $($buildScript.Directory.FullName)"
+
+      - name: Print relevant Smart Editing code
+        shell: pwsh
+        run: |
+          $patterns = @(
+            "Terjadi error yang tidak diketahui",
+            "Smart Editing MP4 gagal",
+            "Pemrosesan Smart Editing",
+            "Smart Editing MP4",
+            "h264_videotoolbox",
+            "libx264",
+            "CalledProcessError",
+            "finalize.*mp4",
+            "smart.*final",
+            "ffprobe",
+            "ffmpeg.*stderr",
+            "stderr.*ffmpeg"
+          )
+          foreach ($file in (Get-ChildItem $env:SOURCE_ROOT -Recurse -Filter *.py)) {
+            $matches = Select-String -Path $file.FullName -Pattern $patterns -Context 3,5
+            if ($matches) {
+              Write-Host "=== $($file.FullName) ==="
+              foreach ($match in $matches) {
+                Write-Host ("LINE {0}: {1}" -f $match.LineNumber, $match.Line.Trim())
+                foreach ($line in $match.Context.PreContext) { Write-Host $line }
+                Write-Host $match.Line
+                foreach ($line in $match.Context.PostContext) { Write-Host $line }
+                Write-Host "---"
+              }
+            }
+          }
