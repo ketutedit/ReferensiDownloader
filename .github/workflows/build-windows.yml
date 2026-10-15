@@ -44,30 +44,26 @@ jobs:
           "SOURCE_ROOT=$($buildScript.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Source root: $($buildScript.Directory.FullName)"
 
-      - name: Inspect Smart Editing conversion code
-        shell: pwsh
-        run: |
-          $core = Join-Path $env:SOURCE_ROOT "core.py"
-          if (-not (Test-Path $core)) { throw "core.py not found: $core" }
-          $lines = Get-Content $core
-          Write-Host "=== core.py lines 990-1170 (complete FFmpeg conversion path) ==="
-          for ($n = 989; $n -lt [Math]::Min(1170, $lines.Length); $n++) {
-            Write-Host ("{0}: {1}" -f ($n + 1), $lines[$n])
-          }
-
       - name: Set up Python 3.12 x64
-        if: false
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           architecture: 'x64'
 
+      - name: Apply Windows Smart Editing MP4 stability patch
+        shell: pwsh
+        run: |
+          python "$env:GITHUB_WORKSPACE\patches\patch_core_windows_smart_mp4.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Smart Editing patch failed." }
+          python -m py_compile "$env:SOURCE_ROOT\core.py"
+          if ($LASTEXITCODE -ne 0) { throw "core.py syntax check failed." }
+
       - name: Build Windows portable + installer
-        if: false
         shell: pwsh
         run: |
           Set-Location $env:SOURCE_ROOT
           .\build_windows.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Windows build script failed." }
           $artifactDir = Join-Path $env:GITHUB_WORKSPACE "ci-artifacts"
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
           Copy-Item ".\dist\ReferensiDownloader-Windows-x64-Portable.zip" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Portable.zip") -Force
@@ -75,7 +71,6 @@ jobs:
           Get-ChildItem $artifactDir | Format-Table Name,Length
 
       - name: Upload Windows build artifact
-        if: false
         uses: actions/upload-artifact@v4
         with:
           name: ReferensiDownloader-Windows-x64
@@ -84,23 +79,22 @@ jobs:
           path: ci-artifacts/*
 
       - name: Publish direct Windows downloads
-        if: false
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: windows-latest
           target_commitish: ${{ github.sha }}
           name: Referensi Downloader — Windows x64 (Latest)
           body: |
-            Automated Windows x64 build of Referensi Downloader v2.3.
+            Automated Windows x64 build of Referensi Downloader v2.3 with the Smart Editing MP4 stability patch.
 
             Download the Setup.exe asset for the installer, or the Portable.zip asset for the portable build.
-            The installer is provided directly as an EXE so it does not need to be extracted from the GitHub Actions artifact ZIP.
           prerelease: true
           overwrite_files: true
           files: ci-artifacts/*
 
       - name: Attach files to GitHub Release for version tags
-        if: false
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: ci-artifacts/*
