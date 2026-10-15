@@ -47,33 +47,27 @@ jobs:
       - name: Inspect Smart Editing conversion code
         shell: pwsh
         run: |
-          Write-Host "=== Python source files ==="
-          Get-ChildItem $env:SOURCE_ROOT -Recurse -Filter *.py | Select-Object -ExpandProperty FullName
-          $patterns = @(
-            "Terjadi error yang tidak diketahui",
-            "Smart Editing MP4 gagal",
-            "Pemrosesan Smart Editing",
-            "Smart Editing MP4",
-            "h264_videotoolbox",
-            "libx264",
-            "subprocess.run",
-            "ffprobe"
-          )
+          $core = Join-Path $env:SOURCE_ROOT "core.py"
+          if (-not (Test-Path $core)) { throw "core.py not found: $core" }
+          $lines = Get-Content $core
+          Write-Host "=== core.py lines 990-1100 (complete FFmpeg conversion path) ==="
+          for ($n = 989; $n -lt [Math]::Min(1100, $lines.Length); $n++) {
+            Write-Host ("{0}: {1}" -f ($n + 1), $lines[$n])
+          }
+          Write-Host "=== Smart Editing wrappers ==="
           foreach ($file in (Get-ChildItem $env:SOURCE_ROOT -Recurse -Filter *.py)) {
-            $matches = Select-String -Path $file.FullName -Pattern $patterns -Context 3,5
-            if ($matches) {
-              Write-Host "=== $($file.FullName) ==="
-              foreach ($match in $matches) { Write-Host $match.ToString(); foreach($line in $match.Context.PreContext){Write-Host $line}; Write-Host $match.Line; foreach($line in $match.Context.PostContext){Write-Host $line}; Write-Host "---" }
-            }
+            Select-String -Path $file.FullName -Pattern "clean_error\(|_smart_finalize_editor_mp4|Pemrosesan Smart Editing MP4 gagal" -Context 2,3 | ForEach-Object { Write-Host $_.ToString() }
           }
 
       - name: Set up Python 3.12 x64
+        if: false
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           architecture: 'x64'
 
       - name: Build Windows portable + installer
+        if: false
         shell: pwsh
         run: |
           Set-Location $env:SOURCE_ROOT
@@ -85,6 +79,7 @@ jobs:
           Get-ChildItem $artifactDir | Format-Table Name,Length
 
       - name: Upload Windows build artifact
+        if: false
         uses: actions/upload-artifact@v4
         with:
           name: ReferensiDownloader-Windows-x64
@@ -93,7 +88,7 @@ jobs:
           path: ci-artifacts/*
 
       - name: Publish direct Windows downloads
-        if: github.ref == 'refs/heads/main'
+        if: false
         uses: softprops/action-gh-release@v2
         with:
           tag_name: windows-latest
@@ -109,7 +104,7 @@ jobs:
           files: ci-artifacts/*
 
       - name: Attach files to GitHub Release for version tags
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: false
         uses: softprops/action-gh-release@v2
         with:
           files: ci-artifacts/*
