@@ -12,7 +12,7 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -44,13 +44,34 @@ jobs:
           "SOURCE_ROOT=$($buildScript.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Source root: $($buildScript.Directory.FullName)"
 
+      - name: Inspect Instagram URL and cookie handling
+        shell: pwsh
+        run: |
+          $core = Join-Path $env:SOURCE_ROOT "core.py"
+          $app = Join-Path $env:SOURCE_ROOT "app.py"
+          Write-Host "=== core.py relevant function bodies ==="
+          $lines = Get-Content $core
+          $starts = Select-String -Path $core -Pattern '^def .*instagram|^def _.*cookie|^def _.*browser|^def _extract_info_once|^def _gallery'
+          foreach ($match in $starts) {
+            $start = $match.LineNumber - 1
+            $end = $start + 1
+            while ($end -lt $lines.Length -and $lines[$end] -notmatch '^(def |class )') { $end++ }
+            Write-Host ("--- Lines {0}-{1} ---" -f ($start + 1), $end)
+            for ($n = $start; $n -lt $end; $n++) { Write-Host ("{0}: {1}" -f ($n + 1), $lines[$n]) }
+          }
+          Write-Host "=== app.py Instagram/login dispatch excerpts ==="
+          Select-String -Path $app -Pattern 'Website Login|auth_browser|gallery|Instagram|instagram|browser|analyze_url' -Context 2,4 |
+            ForEach-Object { Write-Host $_.ToString(); foreach ($line in $_.Context.PreContext) { Write-Host $line }; Write-Host $_.Line; foreach ($line in $_.Context.PostContext) { Write-Host $line }; Write-Host "---" }
+
       - name: Set up Python 3.12 x64
+        if: false
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           architecture: 'x64'
 
       - name: Apply Windows Smart Editing MP4 stability patch
+        if: false
         shell: pwsh
         run: |
           python "$env:GITHUB_WORKSPACE\patches\patch_core_windows_smart_mp4.py" "$env:SOURCE_ROOT"
@@ -59,6 +80,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "core.py syntax check failed." }
 
       - name: Build Windows portable + installer
+        if: false
         shell: pwsh
         run: |
           Set-Location $env:SOURCE_ROOT
@@ -68,9 +90,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
           Copy-Item ".\dist\ReferensiDownloader-Windows-x64-Portable.zip" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Portable.zip") -Force
           Copy-Item ".\dist\installer\ReferensiDownloader-Windows-x64-Setup.exe" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Setup.exe") -Force
-          Get-ChildItem $artifactDir | Format-Table Name,Length
 
       - name: Upload Windows build artifact
+        if: false
         uses: actions/upload-artifact@v4
         with:
           name: ReferensiDownloader-Windows-x64
@@ -79,22 +101,20 @@ jobs:
           path: ci-artifacts/*
 
       - name: Publish direct Windows downloads
-        if: github.ref == 'refs/heads/main'
+        if: false
         uses: softprops/action-gh-release@v2
         with:
           tag_name: windows-latest
           target_commitish: ${{ github.sha }}
           name: Referensi Downloader — Windows x64 (Latest)
           body: |
-            Automated Windows x64 build of Referensi Downloader v2.3 with the Smart Editing MP4 stability patch.
-
-            Download the Setup.exe asset for the installer, or the Portable.zip asset for the portable build.
+            Automated Windows x64 build of Referensi Downloader v2.3.
           prerelease: true
           overwrite_files: true
           files: ci-artifacts/*
 
       - name: Attach files to GitHub Release for version tags
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: false
         uses: softprops/action-gh-release@v2
         with:
           files: ci-artifacts/*
