@@ -59,8 +59,11 @@ def main() -> None:
         ordered = ["chrome", "brave", "edge", "firefox"]
     else:
         ordered = ["chrome", "brave", "edge", "firefox"]
-    installed = [b for b in ordered if _browser_installed(b)]
-    return installed or ordered
+    # Automatic must still try each browser's standard profile path. A profile
+    # can be valid even when the app's lightweight directory check misses it
+    # (custom installation, custom user-data directory, or a delayed profile).
+    # gallery-dl will report a clear error for browsers that are unavailable.
+    return ordered
 
 
 def _browser_profile_candidates(browser: str) -> list[str | None]:
@@ -310,10 +313,10 @@ def _browser_profile_candidates(browser: str) -> list[str | None]:
             break
     detail_text = "\\n".join(details)
     return (
-        "Instagram belum mengembalikan media. Aplikasi sudah mencoba cookie browser dan profile yang terdeteksi. "
-        "Pastikan akun bisa membuka media itu di browser yang dipilih dan refresh halamannya. "
-        "Jika Edge/Chrome tetap gagal dibaca di Windows, coba login Instagram di Firefox, pilih Firefox pada "
-        "menu Website Login, lalu Analyze lagi.\\n\\n" + detail_text
+        "Instagram belum mengembalikan media. Aplikasi sudah mencoba sesi browser dan profile yang tersedia. "
+        "Jika akunmu login di Chrome, pilih Chrome secara langsung pada menu Website Login lalu Analyze lagi. "
+        "Pastikan Chrome dapat membuka media tersebut. Jika cookie Chrome tetap tidak bisa dibaca, versi berikutnya "
+        "perlu memakai file cookies.txt yang diekspor lokal dari Chrome.\\n\\n" + detail_text
     )
 ''',
         "deduplicate and clarify browser errors",
