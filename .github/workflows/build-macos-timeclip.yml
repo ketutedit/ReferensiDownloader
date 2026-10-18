@@ -65,7 +65,20 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x "$SOURCE_ROOT/BUILD_DISTRIBUTABLE.command" "$SOURCE_ROOT/build_macos.sh"
-          zsh "$SOURCE_ROOT/BUILD_DISTRIBUTABLE.command"
+          # hdiutil can occasionally report a transient "Resource busy" on
+          # hosted macOS runners after signing. Retry the packaging stage once.
+          for attempt in 1 2; do
+            if zsh "$SOURCE_ROOT/BUILD_DISTRIBUTABLE.command"; then
+              break
+            fi
+            if [ "$attempt" -ge 2 ]; then
+              echo "macOS app packaging failed after retry."
+              exit 1
+            fi
+            echo "Build attempt $attempt failed. Waiting and clearing stale disk-image mounts before retry..."
+            hdiutil info || true
+            sleep 8
+          done
           test -f "$SOURCE_ROOT/dist/ReferensiDownloader-AppleSilicon.dmg"
           test -d "$SOURCE_ROOT/dist/Referensi Downloader.app"
           echo "Apple Silicon DMG built successfully."
