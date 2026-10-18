@@ -177,6 +177,13 @@ def _browser_profile_candidates(browser: str) -> list[str | None]:
         include = "posts"
     gdl_config.set(("extractor", "instagram"), "include", include)
 
+    # gallery-dl defaults user ID lookup to topsearch + profile HTML scraping.
+    # Both can fail when Instagram serves a login/challenge page on Windows.
+    # Try the authenticated web_profile_info endpoint first, then retain the
+    # original strategies as fallbacks.
+    gdl_config.set(("extractor", "instagram"), "user-strategy", "info,web,search")
+    gdl_config.set(("extractor", "instagram"), "user-cache", False)
+
     cookie_value = _gallery_cookie_tuple(cookie_browser, cookie_profile)
     if cookie_value:
         gdl_config.set((), "cookies", cookie_value)
