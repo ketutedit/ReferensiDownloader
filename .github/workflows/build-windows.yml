@@ -57,8 +57,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Smart Editing patch failed." }
           python "$env:GITHUB_WORKSPACE\patches\patch_core_windows_instagram.py" "$env:SOURCE_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "Instagram compatibility patch failed." }
-          python -m py_compile "$env:SOURCE_ROOT\core.py"
-          if ($LASTEXITCODE -ne 0) { throw "core.py syntax check failed." }
+          python "$env:GITHUB_WORKSPACE\patches\patch_windows_cookiefile.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "cookies.txt fallback patch failed." }
+          python -m py_compile "$env:SOURCE_ROOT\core.py" "$env:SOURCE_ROOT\app.py"
+          if ($LASTEXITCODE -ne 0) { throw "Python syntax check failed." }
 
       - name: Build Windows portable + installer
         shell: pwsh
