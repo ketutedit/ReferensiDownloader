@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-macos:
@@ -77,10 +77,18 @@ jobs:
           "$SOURCE_ROOT/.buildenv/bin/python" \
             "$GITHUB_WORKSPACE/tests/test_time_range_integration.py" "$SOURCE_ROOT"
 
-      - name: Upload macOS test DMG
-        uses: actions/upload-artifact@v4
+      - name: Publish Apple Silicon Time Range test DMG
+        uses: softprops/action-gh-release@v2
         with:
-          name: ReferensiDownloader-AppleSilicon-TimeRange-MacTest
-          if-no-files-found: error
-          retention-days: 14
-          path: .ci-src/ReferensiDownloader_v2.3/dist/ReferensiDownloader-AppleSilicon.dmg
+          tag_name: time-range-macos-test-v1
+          target_commitish: ${{ github.sha }}
+          name: Referensi Downloader — Apple Silicon Time Range Test
+          body: |
+            Experimental macOS build with optional video Time Range clipping.
+
+            Build and synthetic FFmpeg section-clipping integration test passed.
+            Please test with an actual video URL before wider distribution.
+          prerelease: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: .ci-src/ReferensiDownloader_v2.3/dist/ReferensiDownloader-AppleSilicon.dmg
