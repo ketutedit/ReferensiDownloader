@@ -1,0 +1,86 @@
+name: Build macOS Time Range Test
+
+on:
+  push:
+    branches: [feature-timeclip-mac]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct v2.3 source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            source/chunks/part00a.b64 \
+            source/chunks/part00b.b64 \
+            source/chunks/part01.b64 \
+            source/chunks/part02.b64 \
+            source/chunks/part03.b64 \
+            source/chunks/part04.b64 \
+            source/chunks/part05.b64 \
+            source/chunks/part06.b64 \
+            | tr -d '\r\n' | base64 -D > .ci-source.zip
+          HASH="$(shasum -a 256 .ci-source.zip | awk '{print $1}')"
+          if [ "$HASH" != "236d70e4680e87c53c62c5db15ee96d7d56320578d065db4c421051fc6f35216" ]; then
+            echo "Source bundle SHA256 mismatch: $HASH"
+            exit 1
+          fi
+          mkdir -p .ci-src
+          unzip -q .ci-source.zip -d .ci-src
+          BUILD_SCRIPT="$(find .ci-src -type f -name 'BUILD_DISTRIBUTABLE.command' -print -quit)"
+          if [ -z "$BUILD_SCRIPT" ]; then
+            echo "BUILD_DISTRIBUTABLE.command not found"
+            exit 1
+          fi
+          SOURCE_ROOT="$(dirname "$BUILD_SCRIPT")"
+          echo "SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
+          echo "Mac runner architecture: $(uname -m)"
+          echo "Source root: $SOURCE_ROOT"
+          test "$(uname -m)" = "arm64"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply Time Range feature and compile-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          python "$GITHUB_WORKSPACE/patches/patch_time_range.py" "$SOURCE_ROOT"
+          python -m py_compile "$SOURCE_ROOT/core.py" "$SOURCE_ROOT/app.py"
+
+      - name: Build native Apple Silicon app and DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x "$SOURCE_ROOT/BUILD_DISTRIBUTABLE.command" "$SOURCE_ROOT/build_macos.sh"
+          zsh "$SOURCE_ROOT/BUILD_DISTRIBUTABLE.command"
+          test -f "$SOURCE_ROOT/dist/ReferensiDownloader-AppleSilicon.dmg"
+          test -d "$SOURCE_ROOT/dist/Referensi Downloader.app"
+          echo "Apple Silicon DMG built successfully."
+
+      - name: Test time parsing and actual FFmpeg section clipping
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$SOURCE_ROOT/.buildenv/bin/python" \
+            "$GITHUB_WORKSPACE/tests/test_time_range_integration.py" "$SOURCE_ROOT"
+
+      - name: Upload macOS test DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReferensiDownloader-AppleSilicon-TimeRange-MacTest
+          if-no-files-found: error
+          retention-days: 14
+          path: .ci-src/ReferensiDownloader_v2.3/dist/ReferensiDownloader-AppleSilicon.dmg
