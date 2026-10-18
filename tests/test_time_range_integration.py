@@ -94,11 +94,77 @@ def main() -> None:
             "-pix_fmt", "yuv420p", "-c:a", "aac", str(input_path),
         ])
 
-        class QuietHandler(SimpleHTTPRequestHandler):
+        class QuietRangeHandler(SimpleHTTPRequestHandler):
+            """Minimal single-file HTTP server with byte-range support for FFmpeg."""
+            def __init__(self, *args, directory=None, **kwargs):
+                self._range_length = None
+                super().__init__(*args, directory=directory, **kwargs)
+
             def log_message(self, *_):
                 pass
 
-        handler = partial(QuietHandler, directory=str(base))
+            def send_head(self):
+                self._range_length = None
+                path = self.translate_path(self.path)
+                if os.path.isdir(path):
+                    return super().send_head()
+                try:
+                    source = open(path, "rb")
+                except OSError:
+                    self.send_error(404, "File not found")
+                    return None
+
+                size = os.fstat(source.fileno()).st_size
+                range_header = self.headers.get("Range")
+                start, end = 0, size - 1
+                status = 200
+                if range_header:
+                    match = __import__("re").fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+                    if not match or (not match.group(1) and not match.group(2)):
+                        source.close()
+                        self.send_error(416, "Invalid byte range")
+                        return None
+                    if not match.group(1):
+                        length = min(int(match.group(2)), size)
+                        start = max(0, size - length)
+                    else:
+                        start = int(match.group(1))
+                        end = int(match.group(2)) if match.group(2) else size - 1
+                    end = min(end, size - 1)
+                    if start >= size or start > end:
+                        source.close()
+                        self.send_response(416)
+                        self.send_header("Content-Range", f"bytes */{size}")
+                        self.end_headers()
+                        return None
+                    status = 206
+                    self._range_length = end - start + 1
+                    source.seek(start)
+                else:
+                    self._range_length = None
+
+                self.send_response(status)
+                self.send_header("Content-Type", self.guess_type(path))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Length", str(self._range_length if status == 206 else size))
+                if status == 206:
+                    self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+                self.send_header("Last-Modified", self.date_time_string(os.path.getmtime(path)))
+                self.end_headers()
+                return source
+
+            def copyfile(self, source, outputfile):
+                remaining = self._range_length
+                if remaining is None:
+                    return super().copyfile(source, outputfile)
+                while remaining > 0:
+                    block = source.read(min(64 * 1024, remaining))
+                    if not block:
+                        break
+                    outputfile.write(block)
+                    remaining -= len(block)
+
+        handler = partial(QuietRangeHandler, directory=str(base))
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
