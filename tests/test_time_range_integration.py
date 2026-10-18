@@ -26,7 +26,14 @@ def main() -> None:
         raise RuntimeError("Bundled FFmpeg/FFprobe not found after macOS packaging.")
 
     os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     sys.path.insert(0, str(root))
+
+    from types import SimpleNamespace
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication, QLineEdit
+    qt_app = QApplication.instance() or QApplication([])
 
     import core
     import app
@@ -38,6 +45,31 @@ def main() -> None:
     assert app._parse_timecode("36:00") == 2160
     assert app._parse_timecode("90") == 90
     assert app._format_timecode(2144) == "00:35:44"
+
+    # The time fields use an input mask so separators stay fixed while users
+    # can type just the six digits. Analyze should populate End from the source
+    # video duration and reset Start to zero.
+    start_edit = QLineEdit()
+    end_edit = QLineEdit()
+    for edit in (start_edit, end_edit):
+        edit.setInputMask("00:00:00;_")
+        edit.setText("00:00:00")
+    dummy_window = SimpleNamespace(time_range_start=start_edit, time_range_end=end_edit)
+    app.MainWindow._set_time_range_defaults(
+        dummy_window, SimpleNamespace(duration=635.8, items=[])
+    )
+    assert start_edit.text() == "00:00:00"
+    assert end_edit.text() == "00:10:35", end_edit.text()
+    start_edit.setCursorPosition(0)
+    QTest.keyClicks(start_edit, "000822")
+    assert start_edit.text() == "00:08:22", start_edit.text()
+    assert app._parse_timecode(start_edit.text()) == 502
+    # If MediaInfo has no duration, the first media item duration is used.
+    app.MainWindow._set_time_range_defaults(
+        dummy_window,
+        SimpleNamespace(duration=0, items=[SimpleNamespace(duration=130.5)]),
+    )
+    assert end_edit.text() == "00:02:10", end_edit.text()
 
     # Exercise Referensi Downloader's actual option builder with a fake YDL,
     # and assert the range is forwarded as expected without a network request.
@@ -205,6 +237,8 @@ def main() -> None:
             thread.join(timeout=2)
 
     print("TIME_RANGE_PARSE_TEST=PASS")
+    print("TIME_RANGE_INPUT_MASK_TEST=PASS")
+    print("TIME_RANGE_AUTO_DURATION_TEST=PASS")
     print("TIME_RANGE_YTDLP_OPTIONS_TEST=PASS")
     print(f"TIME_RANGE_CLIP_INTEGRATION_TEST=PASS duration={duration:.3f}s file={output.name}")
 
