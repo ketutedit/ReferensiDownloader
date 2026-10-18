@@ -1,0 +1,77 @@
+name: Inspect Time Clip Integration
+
+on:
+  push:
+    branches: [inspect-timeclip]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct source bundle
+        shell: pwsh
+        run: |
+          $names = @(
+            "part00a.b64", "part00b.b64",
+            "part01.b64", "part02.b64", "part03.b64",
+            "part04.b64", "part05.b64", "part06.b64"
+          )
+          $b64 = ""
+          foreach ($name in $names) {
+            $path = Join-Path "source/chunks" $name
+            if (-not (Test-Path $path)) { throw "Missing source chunk: $path" }
+            $b64 += (Get-Content $path -Raw).Trim()
+          }
+          $bytes = [Convert]::FromBase64String($b64)
+          [IO.File]::WriteAllBytes(".ci-source.zip", $bytes)
+          $hash = (Get-FileHash ".ci-source.zip" -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "236d70e4680e87c53c62c5db15ee96d7d56320578d065db4c421051fc6f35216") { throw "Source bundle SHA256 mismatch: $hash" }
+          Expand-Archive -Path .ci-source.zip -DestinationPath .ci-src -Force
+          $buildScript = Get-ChildItem .ci-src -Recurse -Filter build_windows.ps1 | Select-Object -First 1
+          "SOURCE_ROOT=$($buildScript.Directory.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-ChildItem $env:SOURCE_ROOT -File | Select-Object Name,Length | Format-Table -AutoSize
+
+      - name: Inspect Python function structure and selected implementations
+        shell: pwsh
+        run: |
+          @'
+          import ast
+          from pathlib import Path
+          root = Path(__import__("os").environ["SOURCE_ROOT"])
+          for filename in ("core.py", "app.py"):
+              path = root / filename
+              print("\\n===== STRUCTURE:", filename, "=====")
+              source = path.read_text(encoding="utf-8")
+              lines = source.splitlines()
+              tree = ast.parse(source)
+              for node in tree.body:
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                      print(f"{type(node).__name__} {node.name}: {node.lineno}-{node.end_lineno}")
+              wanted = {
+                  "core.py": {
+                      "_download_once", "download_media", "download_direct_item",
+                      "_smart_finalize_editor_mp4", "analyze_url", "_extract_info_once",
+                      "_download_instagram_items"
+                  },
+                  "app.py": {
+                      "analyze", "download", "_analysis_done", "_download_done",
+                      "_worker_error", "__init__", "_carousel_item_changed"
+                  },
+              }[filename]
+              for node in ast.walk(tree):
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in wanted:
+                      print(f"\\n===== {filename}:{node.name} ({node.lineno}-{node.end_lineno}) =====")
+                      print("\\n".join(f"{i+1}: {lines[i]}" for i in range(node.lineno-1, node.end_lineno)))
+          print("\\n===== BUILD FILES =====")
+          for name in ("build_macos.sh", "BUILD_DISTRIBUTABLE.command", "build_windows.ps1", "requirements.txt"):
+              p = root / name
+              print(name, "exists=", p.is_file(), "bytes=", p.stat().st_size if p.is_file() else "-")
+              if p.is_file() and name in {"build_macos.sh", "BUILD_DISTRIBUTABLE.command"}:
+                  print(p.read_text(encoding="utf-8", errors="replace")[:12000])
+          '@ | python -
