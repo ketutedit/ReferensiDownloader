@@ -209,7 +209,7 @@ def patch_app(source_root: Path) -> None:
 
 
 def _format_timecode(seconds: float) -> str:
-    total = max(0, int(round(float(seconds))))
+    total = max(0, int(float(seconds)))
     hours, remainder = divmod(total, 3600)
     minutes, secs = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
@@ -228,18 +228,32 @@ class AnalyzeWorker(QObject):
         trrow = QHBoxLayout()
         trlabel = QLabel("Time Range"); trlabel.setFixedWidth(86)
         self.time_range_enabled = QCheckBox("Download only this segment")
-        self.time_range_enabled.setToolTip("Potong satu video berdasarkan waktu. Format: MM:SS atau HH:MM:SS.")
-        self.time_range_start = QLineEdit(); self.time_range_start.setPlaceholderText("Start 00:35:44")
-        self.time_range_end = QLineEdit(); self.time_range_end.setPlaceholderText("End 00:36:00")
-        self.time_range_start.setToolTip("Contoh: 35:44 atau 00:35:44")
-        self.time_range_end.setToolTip("Contoh: 36:00 atau 00:36:00")
-        self.time_range_start.setMaximumWidth(180); self.time_range_end.setMaximumWidth(180)
+        self.time_range_enabled.setToolTip(
+            "Centang untuk mengambil sebagian video. Start dan End otomatis menggunakan format HH:MM:SS."
+        )
+        self.time_range_start = QLineEdit()
+        self.time_range_start.setInputMask("00:00:00;_")
+        self.time_range_start.setText("00:00:00")
+        self.time_range_end = QLineEdit()
+        self.time_range_end.setInputMask("00:00:00;_")
+        self.time_range_end.setText("00:00:00")
+        time_edit_tip = "Ubah angka saja. Tanda titik dua (:) terkunci dan tidak dapat dihapus."
+        self.time_range_start.setToolTip(time_edit_tip)
+        self.time_range_end.setToolTip(time_edit_tip)
+        self.time_range_start.setMaximumWidth(125); self.time_range_end.setMaximumWidth(125)
         self.time_range_start.setEnabled(False); self.time_range_end.setEnabled(False)
         self.time_range_enabled.toggled.connect(self._time_range_toggled)
         trrow.addWidget(trlabel); trrow.addWidget(self.time_range_enabled)
-        trrow.addWidget(QLabel("Start")); trrow.addWidget(self.time_range_start, 1)
-        trrow.addWidget(QLabel("End")); trrow.addWidget(self.time_range_end, 1)
+        trrow.addWidget(QLabel("Start")); trrow.addWidget(self.time_range_start)
+        trrow.addWidget(QLabel("End")); trrow.addWidget(self.time_range_end)
         sl.addLayout(trrow)
+        range_help = QLabel(
+            "Panduan: setelah Analyze, End otomatis mengikuti durasi video asli. "
+            "Centang mode ini, lalu ubah digit Start dan End untuk memilih bagian yang ingin diunduh."
+        )
+        range_help.setWordWrap(True)
+        range_help.setStyleSheet("color: #8b8f98; font-size: 11px;")
+        sl.addWidget(range_help)
 
         self.audio_only = QCheckBox("Audio only (MP3)"); self.audio_only.setMinimumHeight(30); self.audio_only.toggled.connect(self._audio_toggled); sl.addWidget(self.audio_only)
 ''',
@@ -254,6 +268,17 @@ class AnalyzeWorker(QObject):
         '''    def _time_range_toggled(self, enabled: bool):
         self.time_range_start.setEnabled(bool(enabled))
         self.time_range_end.setEnabled(bool(enabled))
+
+    def _set_time_range_defaults(self, media):
+        """Use the analyzed source duration as End; let users edit digits only."""
+        self.time_range_start.setText("00:00:00")
+        duration = float(getattr(media, "duration", 0) or 0)
+        if duration <= 0:
+            for media_item in (getattr(media, "items", None) or []):
+                duration = float(getattr(media_item, "duration", 0) or 0)
+                if duration > 0:
+                    break
+        self.time_range_end.setText(_format_timecode(duration))
 
     def _browser_changed(self, *_):
         self.settings.setValue("cookie_browser", self.browser_session.currentData())
@@ -333,6 +358,20 @@ class AnalyzeWorker(QObject):
         )
 ''',
         "pass range into DownloadWorker",
+    )
+
+    text = replace_once(
+        text,
+        '''    def _analysis_done(self, media: MediaInfo):
+        self.media = media
+        self.analyze_btn.setEnabled(True)
+''',
+        '''    def _analysis_done(self, media: MediaInfo):
+        self.media = media
+        self._set_time_range_defaults(media)
+        self.analyze_btn.setEnabled(True)
+''',
+        "auto-fill the source duration after Analyze",
     )
 
     # DownloadWorker receives the optional range and sends it through both the
