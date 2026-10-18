@@ -177,12 +177,10 @@ def _browser_profile_candidates(browser: str) -> list[str | None]:
         include = "posts"
     gdl_config.set(("extractor", "instagram"), "include", include)
 
-    # gallery-dl defaults user ID lookup to topsearch + profile HTML scraping.
-    # Both can fail when Instagram serves a login/challenge page on Windows.
-    # Try the authenticated web_profile_info endpoint first, then retain the
-    # original strategies as fallbacks.
-    gdl_config.set(("extractor", "instagram"), "user-strategy", "info,web,search")
-    gdl_config.set(("extractor", "instagram"), "user-cache", False)
+    # Keep gallery-dl's default user-ID lookup order. The previous custom
+    # "info,web,search" order made Stories fail with "Requested user could not
+    # be found" on some accounts, while the pre-Time-Range Mac build used the
+    # default extractor strategy successfully.
 
     cookie_value = _gallery_cookie_tuple(cookie_browser, cookie_profile)
     if cookie_value:
@@ -209,10 +207,11 @@ def _browser_profile_candidates(browser: str) -> list[str | None]:
         # from run(). Preserve the real cause; otherwise cookie/profile/API
         # failures look like a valid post that simply contains no media.
         if task_error is not None:
-            details = clean_error(
-                f"{type(task_error).__name__}: {task_error}",
-                fallback="gallery-dl gagal mengambil media Instagram.",
-            )
+            # core.clean_error() in the Mac v2.3 source does not accept a
+            # fallback keyword. Do not pass unsupported arguments here.
+            details = clean_error(f"{type(task_error).__name__}: {task_error}")
+            if not details or details == "Terjadi error yang tidak diketahui.":
+                details = "gallery-dl gagal mengambil media Instagram."
             raise RuntimeError(f"gallery-dl Instagram: {details}") from task_error
         raise RuntimeError("Instagram tidak mengembalikan media foto/video yang bisa diunduh.")
     return items
