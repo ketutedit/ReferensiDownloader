@@ -165,7 +165,7 @@ def patch_app(source_root: Path) -> None:
             return
         # A Netscape cookie jar has tab-delimited rows; don't display or log
         # cookie values because they are private session credentials.
-        if not any(line.count("\\\\t") >= 6 for line in preview.splitlines() if line and not line.startswith("#")):
+        if not any(line.count(chr(9)) >= 6 for line in preview.splitlines() if line and not line.startswith("#")):
             QMessageBox.warning(
                 self,
                 "Format cookies.txt",
