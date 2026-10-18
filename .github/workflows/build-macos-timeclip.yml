@@ -58,6 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           python "$GITHUB_WORKSPACE/patches/patch_time_range.py" "$SOURCE_ROOT"
+          python "$GITHUB_WORKSPACE/patches/patch_mac_instagram_recovery.py" "$SOURCE_ROOT"
           python -m py_compile "$SOURCE_ROOT/core.py" "$SOURCE_ROOT/app.py"
 
       - name: Build native Apple Silicon app and DMG
