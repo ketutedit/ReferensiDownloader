@@ -59,6 +59,7 @@ jobs:
           python "$GITHUB_WORKSPACE/patches/patch_mac_instagram_recovery.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_core_mac_instagram.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_mac_cookiefile.py" "$SOURCE_ROOT"
+          python "$GITHUB_WORKSPACE/patches/patch_mac_facebook_story.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_mac_story_diagnostics.py" "$SOURCE_ROOT"
           python -m py_compile "$SOURCE_ROOT/core.py" "$SOURCE_ROOT/app.py"
 
@@ -91,6 +92,13 @@ jobs:
           set -euo pipefail
           "$SOURCE_ROOT/.buildenv/bin/python" \
             "$GITHUB_WORKSPACE/tests/test_time_range_integration.py" "$SOURCE_ROOT"
+
+      - name: Test Facebook Story media parsing
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$SOURCE_ROOT/.buildenv/bin/python" \
+            "$GITHUB_WORKSPACE/tests/test_facebook_story_parser.py" "$SOURCE_ROOT"
 
       - name: Publish Apple Silicon Time Range test DMG
         uses: softprops/action-gh-release@v2
