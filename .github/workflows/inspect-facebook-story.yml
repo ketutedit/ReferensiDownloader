@@ -1,0 +1,54 @@
+name: Inspect Facebook Story Integration Points
+
+on:
+  push:
+    branches: [feature-timeclip-mac]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat source/chunks/part00a.b64 source/chunks/part00b.b64 source/chunks/part01.b64 source/chunks/part02.b64 source/chunks/part03.b64 source/chunks/part04.b64 source/chunks/part05.b64 source/chunks/part06.b64 | tr -d '\r\n' | base64 -D > .ci-source.zip
+          echo "236d70e4680e87c53c62c5db15ee96d7d56320578d065db4c421051fc6f35216  .ci-source.zip" | shasum -a 256 -c -
+          mkdir .ci-src
+          unzip -q .ci-source.zip -d .ci-src
+          SOURCE_ROOT="$(dirname "$(find .ci-src -type f -name BUILD_DISTRIBUTABLE.command -print -quit)")"
+          echo "SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
+      - name: Print integration points
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast, os, sys
+          from pathlib import Path
+          sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+          root=Path(os.environ["SOURCE_ROOT"])
+          for filename in ("core.py","app.py"):
+              source=(root/filename).read_text(encoding="utf-8")
+              lines=source.splitlines()
+              tree=ast.parse(source)
+              nodes=[]
+              for node in ast.walk(tree):
+                  if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):
+                      name=node.name
+                      keep = (
+                          (filename=="core.py" and name in {"MediaItem","MediaInfo","analyze_url","download_direct_item","download_media","_gallery_instagram_once","_extract_info_once"})
+                          or (filename=="app.py" and name in {"AnalyzeWorker","DownloadWorker","MainWindow"})
+                      )
+                      if keep:
+                          nodes.append(node)
+              for node in sorted(nodes,key=lambda n:n.lineno):
+                  print(f"\\n===== {filename}:{node.name} lines {node.lineno}-{node.end_lineno} =====")
+                  start=node.lineno-1; end=min(node.end_lineno,start+260)
+                  print("\\n".join(f"{i+1}: {lines[i]}" for i in range(start,end)))
+                  if end<node.end_lineno:
+                      print(f"... truncated at line {end}")
+          PY
