@@ -385,10 +385,20 @@ def patch_app_download(source_root: Path) -> None:
             # Facebook Story analysis already has a direct CDN URL. Avoid
             # sending the unsupported /stories/ URL to yt-dlp first.
             if item.raw.get("_facebook_story_direct"):
-                download_direct_item(
-                    item, self.output_dir, editing_compatible=self.editing_compatible,
-                    progress_cb=hook, include_slide_prefix=False,
-                )
+                # Time Range and MP3 need yt-dlp/FFmpeg post-processing; use
+                # the signed media URL directly, not the unsupported Story page.
+                if self.time_range is not None or self.audio_only:
+                    download_media(
+                        item.direct_url, self.output_dir, None, self.container,
+                        self.audio_only, self.editing_compatible,
+                        progress_cb=hook, cookie_browser=None,
+                        time_range=self.time_range,
+                    )
+                else:
+                    download_direct_item(
+                        item, self.output_dir, editing_compatible=self.editing_compatible,
+                        progress_cb=hook, include_slide_prefix=False,
+                    )
                 continue
 
             # For an All Items download every video uses Best Available. For a
