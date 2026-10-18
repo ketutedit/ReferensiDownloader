@@ -157,16 +157,11 @@ def _download_once(
     # keyword is kept optional so all pre-existing callers behave unchanged.
     start = text.index("def download_media(")
     prefix, body = text[:start], text[start:]
-    pattern = re.compile(r'(?m)^([ \t]*)filename_prefix=filename_prefix,\s*$')
-    body, count = pattern.subn(
-        lambda m: (
-            f"{m.group(1)}filename_prefix=filename_prefix,\n"
-            f"{m.group(1)}time_range=time_range,"
-        ),
-        body,
-    )
+    needle = "filename_prefix=filename_prefix,"
+    count = body.count(needle)
     if count < 1:
         raise RuntimeError("Patch 'propagate time_range' found no download_media call sites.")
+    body = body.replace(needle, "filename_prefix=filename_prefix, time_range=time_range,")
     text = prefix + body
 
     compile(text, str(path), "exec")
