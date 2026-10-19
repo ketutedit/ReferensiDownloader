@@ -55,7 +55,7 @@ def _facebook_story_meta_tags(page: str) -> dict[str, str]:
 
 
 def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
-    """Find a direct Facebook CDN media URL in an authenticated Story page."""
+    """Extract available SD/HD Story video URLs and a preview image from page source."""
     import html
     import re
     from urllib.parse import urlparse
@@ -82,59 +82,188 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
         if parsed.scheme not in {"https", "http"} or not parsed.hostname:
             return False
         host = parsed.hostname.lower()
-        if not (host.endswith("fbcdn.net") or host.endswith("facebook.com")):
+        is_facebook_cdn = host.endswith(("fbcdn.net", "fbsbx.com"))
+        if not (is_facebook_cdn or host.endswith("facebook.com")):
             return False
         path = parsed.path.lower()
         if media_type == "video":
-            # URLs found in explicitly video-specific GraphQL fields often use
-            # opaque CDN paths without a .mp4 extension. Trust known Facebook
-            # CDN hosts for those fields while excluding obvious page assets.
             return (
                 ".mp4" in path
                 or ".m4v" in path
-                or (
-                    host.endswith(("fbcdn.net", "fbsbx.com"))
-                    and not path.endswith((".js", ".css", ".html", ".json"))
-                )
+                or (is_facebook_cdn and not path.endswith((".js", ".css", ".html", ".json", ".jpg", ".jpeg", ".png", ".webp")))
             )
         return (
-            host.endswith("fbcdn.net")
-            and not path.endswith((".js", ".css", ".html"))
+            is_facebook_cdn
+            and not path.endswith((".js", ".css", ".html", ".json", ".mp4", ".m4v"))
         )
 
-    video_patterns = (
-        r'"playable_url_quality_hd"\s*:\s*"((?:\\.|[^"\\])*)"',
-        r'"browser_native_hd_url"\s*:\s*"((?:\\.|[^"\\])*)"',
-        r'"playable_url"\s*:\s*"((?:\\.|[^"\\])*)"',
-        r'"browser_native_sd_url"\s*:\s*"((?:\\.|[^"\\])*)"',
-        r'"video_url"\s*:\s*"((?:\\.|[^"\\])*)"',
-        r'"playable_url"\s*:\s*\{\s*"url"\s*:\s*"((?:\\.|[^"\\])*)"',
+    def dimensions_near(position: int, tier: str) -> tuple[int | None, int | None]:
+        left = max(0, position - 2400)
+        right = min(len(page), position + 3000)
+        window = page[left:right]
+        local_pos = position - left
+
+        if tier == "SD":
+            pairs = (
+                ("sd_width", "sd_height"),
+                ("video_sd_width", "video_sd_height"),
+                ("low_width", "low_height"),
+                ("width_sd", "height_sd"),
+            )
+        else:
+            pairs = (
+                ("hd_width", "hd_height"),
+                ("original_width", "original_height"),
+                ("video_width", "video_height"),
+                ("width", "height"),
+            )
+
+        def nearest_number(key: str):
+            pattern = re.compile(
+                r"""["']?""" + re.escape(key) + r"""["']?\s*[:=]\s*(\d{2,5})""",
+                re.I,
+            )
+            matches = list(pattern.finditer(window))
+            if not matches:
+                return None
+            return min(matches, key=lambda match: abs(match.start() - local_pos))
+
+        for width_key, height_key in pairs:
+            width_match = nearest_number(width_key)
+            height_match = nearest_number(height_key)
+            if width_match is None or height_match is None:
+                continue
+            if abs(width_match.start() - height_match.start()) > 2400:
+                continue
+            width = int(width_match.group(1))
+            height = int(height_match.group(1))
+            if 32 <= width <= 16384 and 32 <= height <= 16384:
+                return width, height
+        return None, None
+
+    # Facebook commonly exposes both HD and SD streams in one object. The
+    # previous parser only returned the first URL and missed hd_src variants
+    # used by several Story page templates.
+    field_specs = (
+        ("hd_src_no_ratelimit", "HD", 120),
+        ("hd_src", "HD", 115),
+        ("browser_native_hd_url", "HD", 110),
+        ("playable_url_quality_hd", "HD", 105),
+        ("playable_url_hd", "HD", 100),
+        ("sd_src_no_ratelimit", "SD", 90),
+        ("sd_src", "SD", 85),
+        ("browser_native_sd_url", "SD", 80),
+        ("playable_url_quality_sd", "SD", 75),
+        ("playable_url", "Best", 60),
+        ("video_url", "Best", 55),
     )
-    video_url = None
-    for pattern in video_patterns:
-        for match in re.finditer(pattern, page, re.I):
+    variants_by_tier: dict[str, dict[str, Any]] = {}
+    seen_urls: set[str] = set()
+    for field, tier, rank in field_specs:
+        if tier in variants_by_tier:
+            continue
+        pattern = re.compile(
+            r'"' + re.escape(field) + r'"\s*:\s*"((?:\\.|[^"\\])*)"',
+            re.I,
+        )
+        for match in pattern.finditer(page):
             candidate = decode_match(match.group(1))
-            if valid_media_url(candidate, "video"):
-                video_url = candidate
-                break
-        if video_url:
+            if not valid_media_url(candidate, "video") or candidate in seen_urls:
+                continue
+            width, height = dimensions_near(match.start(), tier)
+            fallback_key = 1280 if tier in {"HD", "Best"} else 640
+            selector_height = height if height else fallback_key
+            if any(v["selector_height"] == selector_height for v in variants_by_tier.values()):
+                selector_height = fallback_key
+            if width and height:
+                label = f"{tier} • {width}×{height}" if tier != "Best" else f"Best Available • {width}×{height}"
+            elif tier == "HD":
+                label = "HD • Highest available"
+            elif tier == "SD":
+                label = "SD • Standard"
+            else:
+                label = "Best Available"
+            variants_by_tier[tier] = {
+                "url": candidate,
+                "tier": tier,
+                "rank": rank,
+                "label": label,
+                "width": width,
+                "height": height,
+                "selector_height": int(selector_height),
+                "extension": "mp4",
+            }
+            seen_urls.add(candidate)
             break
 
-    if not video_url:
-        for key in ("og:video", "og:video:url", "og:video:secure_url"):
-            candidate = _decode_facebook_json_string(meta.get(key, ""))
-            if valid_media_url(candidate, "video"):
-                video_url = candidate
+    # Some templates wrap the playable URL in an object rather than storing a
+    # string directly.
+    if "Best" not in variants_by_tier:
+        nested_pattern = re.compile(
+            r'"playable_url"\s*:\s*\{\s*"url"\s*:\s*"((?:\\.|[^"\\])*)"',
+            re.I,
+        )
+        for match in nested_pattern.finditer(page):
+            candidate = decode_match(match.group(1))
+            if valid_media_url(candidate, "video") and candidate not in seen_urls:
+                width, height = dimensions_near(match.start(), "Best")
+                variants_by_tier["Best"] = {
+                    "url": candidate,
+                    "tier": "Best",
+                    "rank": 50,
+                    "label": f"Best Available • {width}×{height}" if width and height else "Best Available",
+                    "width": width,
+                    "height": height,
+                    "selector_height": int(height or 1280),
+                    "extension": "mp4",
+                }
+                seen_urls.add(candidate)
                 break
 
+    # Build the thumbnail independently from the video URL. The old parser
+    # only tried og:image and therefore left preview empty on Story variants
+    # that expose their poster as a JSON thumbnail/image URI.
     thumbnail = ""
-    for key in ("og:image", "og:image:url", "twitter:image"):
-        candidate = _decode_facebook_json_string(meta.get(key, ""))
+    for key in ("og:image", "og:image:url", "twitter:image", "og:video:thumbnail"):
+        candidate = decode_match(meta.get(key, ""))
         if valid_media_url(candidate, "photo"):
             thumbnail = candidate
             break
 
-    if video_url:
+    thumbnail_patterns = (
+        r'"(?:thumbnail_url|video_thumbnail_url|thumbnail_src|poster_url)"\s*:\s*"((?:\\.|[^"\\])*)"',
+        r'"(?:video_thumbnail|preferred_thumbnail|thumbnail|image)"\s*:\s*\{.{0,1400}?"uri"\s*:\s*"((?:\\.|[^"\\])*)"',
+        r'"display_url"\s*:\s*"((?:\\.|[^"\\])*)"',
+        r'"image"\s*:\s*\{.{0,1400}?"uri"\s*:\s*"((?:\\.|[^"\\])*)"',
+    )
+    if not thumbnail:
+        for pattern in thumbnail_patterns:
+            for match in re.finditer(pattern, page, re.I | re.S):
+                candidate = decode_match(match.group(1))
+                if valid_media_url(candidate, "photo"):
+                    thumbnail = candidate
+                    break
+            if thumbnail:
+                break
+
+    variants = sorted(variants_by_tier.values(), key=lambda item: item["rank"], reverse=True)
+    if not variants:
+        for key in ("og:video", "og:video:url", "og:video:secure_url"):
+            candidate = decode_match(meta.get(key, ""))
+            if valid_media_url(candidate, "video"):
+                variants = [{
+                    "url": candidate,
+                    "tier": "Best",
+                    "rank": 10,
+                    "label": "Best Available",
+                    "width": None,
+                    "height": None,
+                    "selector_height": 1280,
+                    "extension": "mp4",
+                }]
+                break
+
+    if variants:
         duration = None
         for pattern in (
             r'"playable_duration_in_ms"\s*:\s*(\d+)',
@@ -148,13 +277,17 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
             match = re.search(r'"video_duration"\s*:\s*(\d+(?:\.\d+)?)', page, re.I)
             if match:
                 duration = max(0, int(float(match.group(1))))
+        best = variants[0]
         return {
-            "direct_url": video_url,
+            "direct_url": best["url"],
             "media_type": "video",
             "extension": "mp4",
             "thumbnail": thumbnail or None,
             "title": title or "Facebook Story",
             "duration": duration,
+            "variants": variants,
+            "width": best.get("width"),
+            "height": best.get("height"),
             "raw": {"_facebook_story_direct": True, "extension": "mp4"},
         }
 
@@ -187,6 +320,9 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
             "thumbnail": image_url,
             "title": title or "Facebook Story",
             "duration": None,
+            "variants": [],
+            "width": None,
+            "height": None,
             "raw": {"_facebook_story_direct": True, "extension": extension},
         }
     return None
