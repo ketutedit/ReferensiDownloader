@@ -86,10 +86,16 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
             return False
         path = parsed.path.lower()
         if media_type == "video":
+            # URLs found in explicitly video-specific GraphQL fields often use
+            # opaque CDN paths without a .mp4 extension. Trust known Facebook
+            # CDN hosts for those fields while excluding obvious page assets.
             return (
                 ".mp4" in path
                 or ".m4v" in path
-                or ("video" in path and "fbcdn.net" in host)
+                or (
+                    host.endswith(("fbcdn.net", "fbsbx.com"))
+                    and not path.endswith((".js", ".css", ".html", ".json"))
+                )
             )
         return (
             host.endswith("fbcdn.net")
@@ -223,9 +229,16 @@ def analyze_facebook_story(
     if "facebook.com" not in parsed.netloc.lower() or "/stories/" not in parsed.path.lower():
         raise RuntimeError("URL bukan Facebook Story.")
 
+    # Facebook serves different web shells on www, mobile, and mbasic.
+    # Keep the full Story path/query intact but try each normal public host.
+    original_host = parsed.netloc.lower().split(":", 1)[0]
     page_urls = [url.strip()]
-    if parsed.netloc.lower() != "m.facebook.com":
-        page_urls.append(urllib.parse.urlunparse(parsed._replace(netloc="m.facebook.com")))
+    for host in ("www.facebook.com", "m.facebook.com", "mbasic.facebook.com"):
+        if host == original_host:
+            continue
+        candidate = urllib.parse.urlunparse(parsed._replace(netloc=host))
+        if candidate not in page_urls:
+            page_urls.append(candidate)
 
     errors: list[str] = []
     for browser, _ in candidates:
@@ -246,32 +259,91 @@ def analyze_facebook_story(
                 for cookie in browser_cookies:
                     jar.set_cookie(cookie)
 
+            # Facebook rejects some standard urllib requests with HTTP 400.
+            # Prefer curl_cffi's browser TLS/client fingerprint and browser-like
+            # navigation headers, but retain urllib as a compatibility fallback.
+            request_headers = {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                          "image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "Referer": "https://www.facebook.com/",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Upgrade-Insecure-Requests": "1",
+            }
+            try:
+                from curl_cffi import requests as curl_requests
+            except Exception:
+                curl_requests = None
+
             opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+            browser_session = None
+            if curl_requests is not None:
+                try:
+                    browser_session = curl_requests.Session(impersonate="chrome")
+                    for cookie in jar:
+                        try:
+                            browser_session.cookies.set(
+                                cookie.name,
+                                cookie.value,
+                                domain=cookie.domain,
+                                path=cookie.path or "/",
+                            )
+                        except Exception:
+                            # Some curl_cffi versions normalize cookie domains differently.
+                            browser_session.cookies.set(cookie.name, cookie.value)
+                except Exception as session_error:
+                    errors.append(
+                        f"{browser.title()}: curl_cffi browser session failed "
+                        f"({type(session_error).__name__})"
+                    )
+                    browser_session = None
+
             media = None
             last_final_url = ""
             for page_url in page_urls:
-                request = urllib.request.Request(
-                    page_url,
-                    headers={
-                        "User-Agent": (
-                            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-                            "Chrome/131.0.0.0 Safari/537.36"
-                        ),
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                                  "image/avif,image/webp,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
-                        "Cache-Control": "no-cache",
-                        "Referer": "https://www.facebook.com/",
-                    },
-                )
+                status_code = 200
                 try:
-                    with opener.open(request, timeout=25) as response:
-                        last_final_url = response.geturl()
-                        page = response.read(30 * 1024 * 1024).decode("utf-8", errors="replace")
+                    if browser_session is not None:
+                        response = browser_session.get(
+                            page_url,
+                            headers=request_headers,
+                            timeout=25,
+                            allow_redirects=True,
+                        )
+                        last_final_url = str(response.url)
+                        status_code = int(response.status_code)
+                        page = str(response.text or "")[:30 * 1024 * 1024]
+                        try:
+                            response.close()
+                        except Exception:
+                            pass
+                    else:
+                        request = urllib.request.Request(
+                            page_url,
+                            headers={
+                                **request_headers,
+                                "User-Agent": (
+                                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                    "Chrome/131.0.0.0 Safari/537.36"
+                                ),
+                            },
+                        )
+                        with opener.open(request, timeout=25) as response:
+                            last_final_url = response.geturl()
+                            status_code = int(getattr(response, "status", 200))
+                            page = response.read(30 * 1024 * 1024).decode("utf-8", errors="replace")
                 except urllib.error.HTTPError as exc:
-                    errors.append(f"{browser.title()}: Facebook HTTP {exc.code}")
-                    continue
+                    status_code = int(exc.code)
+                    last_final_url = str(exc.geturl() or page_url)
+                    try:
+                        page = exc.read(30 * 1024 * 1024).decode("utf-8", errors="replace")
+                    except Exception:
+                        page = ""
                 except Exception as exc:
                     errors.append(f"{browser.title()}: {type(exc).__name__}: {exc}")
                     continue
@@ -286,6 +358,22 @@ def analyze_facebook_story(
                 media = _parse_facebook_story_page(page)
                 if media:
                     break
+
+                if status_code >= 400:
+                    # Do not dump response bodies; some contain account-related
+                    # page data. Report only the HTTP status and host.
+                    response_host = urllib.parse.urlparse(last_final_url).hostname or "Facebook"
+                    errors.append(
+                        f"{browser.title()}: {response_host} HTTP {status_code} "
+                        "(permintaan halaman ditolak)"
+                    )
+                    continue
+
+            if browser_session is not None:
+                try:
+                    browser_session.close()
+                except Exception:
+                    pass
 
             if media:
                 media_type = str(media["media_type"])
