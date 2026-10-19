@@ -38,6 +38,8 @@ jobs:
               names_core={"QualityOption","MediaItem","MediaInfo","analyze_url","download_direct_item"}
               names_app={"AnalyzeWorker","DownloadWorker","MainWindow"}
               for node in tree.body:
+                  if isinstance(node, ast.ClassDef) and node.name == "MainWindow":
+                      print("MainWindow methods:", [(member.name, member.lineno, member.end_lineno) for member in node.body if isinstance(member, ast.FunctionDef)])
                   if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):
                       if filename=="core.py" and node.name in names_core:
                           print(f"\\n--- {node.name} lines {node.lineno}-{node.end_lineno} ---")
