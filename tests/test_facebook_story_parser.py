@@ -22,10 +22,10 @@ def main() -> None:
         </head><body><script type="application/json">
         {
           "width":720,"height":1280,
-          "hd_src_no_ratelimit":"https:\\/\\/video.xx.fbcdn.net\\/v\\/t42.1790-2\\/story-hd.mp4?oh=hd\\u0026oe=def",
+          "hd_src_no_ratelimit":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-hd.mp4?oh=hd\u0026oe=def",
           "sd_width":360,"sd_height":640,
-          "sd_src_no_ratelimit":"https:\\/\\/video.xx.fbcdn.net\\/v\\/t42.1790-2\\/story-sd.mp4?oh=sd\\u0026oe=def",
-          "playable_url":"https:\\/\\/video.xx.fbcdn.net\\/v\\/t42.1790-2\\/playable-standard.mp4?oh=sd2\\u0026oe=def",
+          "sd_src_no_ratelimit":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-sd.mp4?oh=sd\u0026oe=def",
+          "playable_url":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/playable-standard.mp4?oh=sd2\u0026oe=def",
           "playable_duration_in_ms":16000
         }
         </script></body></html>
