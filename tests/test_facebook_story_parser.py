@@ -20,18 +20,36 @@ def main() -> None:
         <title>Story by Test Account</title>
         <meta property="og:image" content="https://scontent.xx.fbcdn.net/v/t39.30808-6/thumb.jpg?x=1">
         </head><body><script type="application/json">
-        {"playable_url_quality_hd":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/123456.mp4?oh=abc\u0026oe=def",
-         "playable_duration_in_ms":16000}
+        {
+          "width":720,"height":1280,
+          "hd_src_no_ratelimit":"https:\\/\\/video.xx.fbcdn.net\\/v\\/t42.1790-2\\/story-hd.mp4?oh=hd\\u0026oe=def",
+          "sd_width":360,"sd_height":640,
+          "sd_src_no_ratelimit":"https:\\/\\/video.xx.fbcdn.net\\/v\\/t42.1790-2\\/story-sd.mp4?oh=sd\\u0026oe=def",
+          "playable_duration_in_ms":16000
+        }
         </script></body></html>
     '''
     video = core._parse_facebook_story_page(video_page)
     assert video is not None, "Video Story fixture was not parsed."
     assert video["media_type"] == "video", video
     assert video["direct_url"] == (
-        "https://video.xx.fbcdn.net/v/t42.1790-2/123456.mp4?oh=abc&oe=def"
+        "https://video.xx.fbcdn.net/v/t42.1790-2/story-hd.mp4?oh=hd&oe=def"
     ), video["direct_url"]
     assert video["duration"] == 16, video["duration"]
+    assert video["thumbnail"] == (
+        "https://scontent.xx.fbcdn.net/v/t39.30808-6/thumb.jpg?x=1"
+    ), video["thumbnail"]
     assert video["raw"]["_facebook_story_direct"] is True
+    variants = video["variants"]
+    assert len(variants) == 2, variants
+    assert variants[0]["tier"] == "HD", variants
+    assert variants[0]["width"] == 720 and variants[0]["height"] == 1280, variants[0]
+    assert variants[0]["selector_height"] == 1280, variants[0]
+    assert variants[0]["label"] == "HD • 720×1280", variants[0]
+    assert variants[1]["tier"] == "SD", variants
+    assert variants[1]["width"] == 360 and variants[1]["height"] == 640, variants[1]
+    assert variants[1]["selector_height"] == 640, variants[1]
+    assert variants[1]["label"] == "SD • 360×640", variants[1]
 
     photo_page = r'''
         <html><head><title>Story image</title>
@@ -52,6 +70,8 @@ def main() -> None:
     assert core._parse_facebook_story_page(login_page) is None
 
     print("FACEBOOK_STORY_VIDEO_PARSE_TEST=PASS")
+    print("FACEBOOK_STORY_QUALITY_VARIANTS_TEST=PASS")
+    print("FACEBOOK_STORY_THUMBNAIL_TEST=PASS")
     print("FACEBOOK_STORY_PHOTO_PARSE_TEST=PASS")
     print("FACEBOOK_LOGIN_PAGE_REJECTION_TEST=PASS")
 
