@@ -48,6 +48,7 @@ jobs:
                           for member in node.body:
                               if isinstance(member,ast.FunctionDef) and member.name in {
                                   "__init__","_analysis_done","_populate_quality","_selected_media_item",
+                                  "_apply_media_item","_item_changed","_quality_changed","_show_thumbnail",
                                   "download","_download_instagram_items","run"
                               }:
                                   print(f"\\n--- {node.name}.{member.name} lines {member.lineno}-{member.end_lineno} ---")
