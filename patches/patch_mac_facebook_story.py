@@ -160,6 +160,13 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
     variants_by_tier: dict[str, dict[str, Any]] = {}
     seen_urls: set[str] = set()
     for field, tier, rank in field_specs:
+        if tier == "Best":
+            # playable_url usually represents the standard stream when HD is
+            # known, but becomes the only available option if no tier exists.
+            if "HD" in variants_by_tier and "SD" not in variants_by_tier and field == "playable_url":
+                tier = "SD"
+            elif variants_by_tier:
+                continue
         if tier in variants_by_tier:
             continue
         pattern = re.compile(
@@ -198,7 +205,7 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
 
     # Some templates wrap the playable URL in an object rather than storing a
     # string directly.
-    if "Best" not in variants_by_tier:
+    if not variants_by_tier:
         nested_pattern = re.compile(
             r'"playable_url"\s*:\s*\{\s*"url"\s*:\s*"((?:\\.|[^"\\])*)"',
             re.I,
