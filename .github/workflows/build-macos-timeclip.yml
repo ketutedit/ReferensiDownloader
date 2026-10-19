@@ -1,6 +1,8 @@
 name: Build macOS Time Range Test
 
 on:
+  push:
+    branches: [feature-timeclip-mac]
   workflow_dispatch:
 
 permissions:
