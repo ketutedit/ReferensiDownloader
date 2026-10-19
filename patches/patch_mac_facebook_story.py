@@ -31,7 +31,23 @@ def _decode_facebook_json_string(value: str) -> str:
             .replace(r"\u002f", "/")
             .replace(r"\u002F", "/")
         )
-    return html.unescape(str(decoded)).replace(r"\/", "/").strip()
+    decoded_text = html.unescape(str(decoded))
+    # Facebook sometimes emits one JSON-escape layer and sometimes two.
+    # Normalize both forms after json.loads so escaped query separators do not
+    # remain literal "\u0026" text in the signed media URL.
+    for _ in range(2):
+        decoded_text = (
+            decoded_text.replace(r"\/", "/")
+            .replace(r"\u0026", "&")
+            .replace(r"\u003d", "=")
+            .replace(r"\u003D", "=")
+            .replace(r"\u0025", "%")
+            .replace(r"\u003a", ":")
+            .replace(r"\u003A", ":")
+            .replace(r"\u002f", "/")
+            .replace(r"\u002F", "/")
+        )
+    return decoded_text.strip()
 
 
 def _facebook_story_meta_tags(page: str) -> dict[str, str]:
