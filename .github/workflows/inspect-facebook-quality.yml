@@ -23,6 +23,7 @@ jobs:
           unzip -q .ci-source.zip -d .ci-src
           SOURCE_ROOT="$(dirname "$(find .ci-src -type f -name BUILD_DISTRIBUTABLE.command -print -quit)")"
           echo "SOURCE_ROOT=$SOURCE_ROOT" >> "$GITHUB_ENV"
+          export SOURCE_ROOT
           python - <<'PY'
           import ast, os, sys
           from pathlib import Path
