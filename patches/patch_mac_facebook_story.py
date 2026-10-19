@@ -516,13 +516,41 @@ def analyze_facebook_story(
                 title = str(media["title"] or "Facebook Story")
                 extension = str(media.get("extension") or "mp4")
                 duration = media.get("duration")
-                qualities = [QualityOption("Best Available", None)] if media_type == "video" else []
+                variants = list(media.get("variants") or [])
+                if media_type == "video" and not variants and media.get("direct_url"):
+                    variants = [{
+                        "url": str(media["direct_url"]),
+                        "tier": "Best",
+                        "rank": 0,
+                        "label": "Best Available",
+                        "width": media.get("width"),
+                        "height": media.get("height"),
+                        "selector_height": int(media.get("height") or 1280),
+                        "extension": extension,
+                    }]
+
+                qualities: list[QualityOption] = []
+                used_selector_heights: set[int] = set()
+                for variant in variants:
+                    selector_height = int(variant.get("selector_height") or variant.get("height") or 1280)
+                    if selector_height in used_selector_heights:
+                        selector_height = 1280 if str(variant.get("tier")) == "HD" else 640
+                        while selector_height in used_selector_heights:
+                            selector_height += 1
+                    used_selector_heights.add(selector_height)
+                    variant["selector_height"] = selector_height
+                    label = str(variant.get("label") or "Best Available")
+                    qualities.append(QualityOption(label, selector_height))
+
                 raw = dict(media.get("raw") or {})
                 raw.update({
                     "source_url": url,
                     "extension": extension,
                     "_facebook_story_direct": True,
+                    "_facebook_story_variants": variants,
                 })
+                best_variant = variants[0] if variants else {}
+                selected_url = str(best_variant.get("url") or media["direct_url"])
                 item = MediaItem(
                     slide_index=1,
                     title=title,
@@ -532,9 +560,9 @@ def analyze_facebook_story(
                     qualities=qualities,
                     raw=raw,
                     media_type=media_type,
-                    direct_url=str(media["direct_url"]),
-                    width=None,
-                    height=None,
+                    direct_url=selected_url,
+                    width=best_variant.get("width") or media.get("width"),
+                    height=best_variant.get("height") or media.get("height"),
                 )
                 return MediaInfo(
                     title=title,
@@ -609,8 +637,34 @@ def patch_app_download(source_root: Path) -> None:
             # Facebook Story analysis already has a direct CDN URL. Avoid
             # sending the unsupported /stories/ URL to yt-dlp first.
             if item.raw.get("_facebook_story_direct"):
+                # Honor the Quality dropdown by choosing the matching direct
+                # CDN URL. Previously this special path ignored self.height and
+                # always downloaded the first (often SD) URL.
+                variants = item.raw.get("_facebook_story_variants") or []
+                selected_variant = None
+                try:
+                    requested_height = int(self.height) if self.height is not None else None
+                except (TypeError, ValueError):
+                    requested_height = None
+                if requested_height is not None:
+                    selected_variant = next(
+                        (
+                            variant for variant in variants
+                            if int(variant.get("selector_height") or -1) == requested_height
+                        ),
+                        None,
+                    )
+                if selected_variant is None and variants:
+                    selected_variant = variants[0]
+                if selected_variant and selected_variant.get("url"):
+                    item.direct_url = str(selected_variant["url"])
+                    item.raw["extension"] = str(selected_variant.get("extension") or "mp4")
+                    item.raw["_selected_story_quality"] = str(
+                        selected_variant.get("label") or "Best Available"
+                    )
+
                 # Time Range and MP3 need yt-dlp/FFmpeg post-processing; use
-                # the signed media URL directly, not the unsupported Story page.
+                # the selected signed media URL directly, not the Story page.
                 if self.time_range is not None or self.audio_only:
                     download_media(
                         item.direct_url, self.output_dir, None, self.container,
