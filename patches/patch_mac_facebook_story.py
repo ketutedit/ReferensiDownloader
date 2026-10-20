@@ -460,7 +460,17 @@ def _apply_facebook_story_dash_formats(
                 if key not in variants_by_key:
                     variants_by_key[key] = dict(variant, width=width, height=height, selector_height=height)
             else:
-                key = ("tier", str(variant.get("tier") or "Best"))
+                tier = str(variant.get("tier") or "Best")
+                # Do not show a second opaque HD URL when DASH already exposes
+                # an actual high-resolution representation.
+                max_dimensioned_height = max(
+                    (int(value.get("height") or 0) for value in variants_by_key.values()),
+                    default=0,
+                )
+                if tier == "HD" and max_dimensioned_height >= 720:
+                    known_urls.add(variant_url)
+                    continue
+                key = ("tier", tier)
                 if key not in variants_by_key:
                     variants_by_key[key] = dict(variant, width=None, height=None)
             known_urls.add(variant_url)
