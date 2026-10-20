@@ -1149,6 +1149,32 @@ def patch_app_download(source_root: Path) -> None:
                     )
                 if selected_variant is None and variants:
                     selected_variant = variants[0]
+                if (
+                    selected_variant
+                    and selected_variant.get("format_id")
+                    and item.raw.get("_facebook_story_dash_formats")
+                ):
+                    # Use yt-dlp's real DASH format pipeline for manifest
+                    # representations. Streaming the format URL as a normal
+                    # MP4 file would discard DASH fragments/audio and could
+                    # fall back to the low-resolution progressive URL.
+                    from core import download_facebook_story_dash_format
+                    download_facebook_story_dash_format(
+                        title=item.title,
+                        source_url=str(item.raw.get("source_url") or self.url),
+                        thumbnail=item.thumbnail,
+                        duration=item.duration,
+                        formats=item.raw.get("_facebook_story_dash_formats") or [],
+                        selected_format_id=str(selected_variant["format_id"]),
+                        output_dir=self.output_dir,
+                        container=self.container,
+                        audio_only=self.audio_only,
+                        editing_compatible=self.editing_compatible,
+                        progress_cb=hook,
+                        time_range=self.time_range,
+                    )
+                    continue
+
                 selected_url = str(item.direct_url or "")
                 selected_item = item
                 if selected_variant and selected_variant.get("url"):
