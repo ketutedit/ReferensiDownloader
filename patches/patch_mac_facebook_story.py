@@ -70,6 +70,274 @@ def _facebook_story_meta_tags(page: str) -> dict[str, str]:
     return result
 
 
+def _extract_facebook_story_dash_formats(
+    page: str,
+    source_url: str,
+    manifest_fetcher=None,
+) -> list[dict[str, Any]]:
+    """Extract DASH representation formats using yt-dlp's native MPD parser.
+
+    Facebook Story pages may expose the best streams only inside an embedded
+    dash_manifest XML or a signed manifest URL. Progressive hd_src fields are
+    not always present, and the Story canvas dimensions are not stream quality.
+    """
+    import html
+    import re
+    from urllib.parse import unquote_plus, urlparse
+
+    try:
+        import yt_dlp
+        from yt_dlp.compat import compat_etree_fromstring
+        from yt_dlp.extractor.facebook import FacebookIE
+    except Exception:
+        return []
+
+    xml_candidates: list[tuple[str, str]] = []
+    remote_candidates: list[str] = []
+
+    def field_values(text: str, key: str):
+        pattern = re.compile(
+            r"""(?<![\w$])(?:"?KEY"?|KEY)\s*[:=]\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')""".replace(
+                "KEY", re.escape(key)
+            ),
+            re.I,
+        )
+        for match in pattern.finditer(text):
+            raw = match.group(1) if match.group(1) is not None else match.group(2)
+            yield match.start(), _decode_facebook_json_string(raw)
+
+    manifest_keys = ("dash_manifest_xml_string", "manifest_xml", "dash_manifest")
+    for key in manifest_keys:
+        for position, value in field_values(page, key):
+            value = html.unescape(str(value)).strip()
+            decoded = unquote_plus(value)
+            if "<MPD" in decoded.upper():
+                window = page[max(0, position - 7000):min(len(page), position + 7000)]
+                nearby_urls = []
+                for url_key in ("dash_manifest_url", "manifest_url", "playable_url_dash"):
+                    for _, candidate in field_values(window, url_key):
+                        candidate = html.unescape(candidate).strip()
+                        parsed = urlparse(candidate)
+                        if parsed.scheme in {"https", "http"} and parsed.netloc:
+                            nearby_urls.append(candidate)
+                mpd_url = nearby_urls[0] if nearby_urls else source_url
+                xml_candidates.append((decoded, mpd_url))
+            elif value.lower().startswith(("https://", "http://")):
+                parsed = urlparse(value)
+                if parsed.scheme in {"https", "http"} and parsed.netloc:
+                    remote_candidates.append(value)
+
+    for key in ("dash_manifest_url", "manifest_url", "playable_url_dash"):
+        for _, candidate in field_values(page, key):
+            candidate = html.unescape(candidate).strip()
+            parsed = urlparse(candidate)
+            if parsed.scheme in {"https", "http"} and parsed.netloc:
+                remote_candidates.append(candidate)
+
+    # If the page contains only a signed manifest URL, fetch it through the
+    # same browser session that opened the Story, preserving local auth cookies.
+    seen_remote: set[str] = set()
+    if manifest_fetcher is not None:
+        for manifest_url in remote_candidates:
+            if manifest_url in seen_remote:
+                continue
+            seen_remote.add(manifest_url)
+            try:
+                fetched = manifest_fetcher(manifest_url)
+                if isinstance(fetched, tuple):
+                    manifest_text, effective_url = fetched
+                else:
+                    manifest_text, effective_url = fetched, manifest_url
+                if not manifest_text:
+                    continue
+                candidate_xml = unquote_plus(html.unescape(str(manifest_text)))
+                if "<MPD" in candidate_xml.upper():
+                    xml_candidates.append((candidate_xml, str(effective_url or manifest_url)))
+            except Exception:
+                continue
+
+    if not xml_candidates:
+        return []
+
+    parsed_formats: list[dict[str, Any]] = []
+    seen_formats: set[tuple[str, str]] = set()
+    try:
+        with yt_dlp.YoutubeDL({
+            "quiet": True,
+            "no_warnings": True,
+            "ignoreconfig": True,
+        }) as ydl:
+            extractor = FacebookIE(ydl)
+            for xml_text, mpd_url in xml_candidates:
+                try:
+                    mpd_doc = compat_etree_fromstring(xml_text)
+                    formats = extractor._parse_mpd_formats(
+                        mpd_doc,
+                        mpd_id="facebook-story-dash",
+                        mpd_url=mpd_url,
+                    )
+                except Exception:
+                    continue
+                for fmt in formats or []:
+                    if not isinstance(fmt, dict):
+                        continue
+                    format_id = str(fmt.get("format_id") or "")
+                    fmt_url = str(fmt.get("url") or "")
+                    if not format_id or not fmt_url:
+                        continue
+                    signature = (format_id, fmt_url)
+                    if signature in seen_formats:
+                        continue
+                    seen_formats.add(signature)
+                    parsed_formats.append(dict(fmt))
+    except Exception:
+        return []
+
+    return parsed_formats
+
+
+def _facebook_story_dash_variants(
+    formats: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build one truthful selectable option per actual DASH video resolution."""
+    best_by_height: dict[int, dict[str, Any]] = {}
+    for fmt in formats or []:
+        if not isinstance(fmt, dict):
+            continue
+        try:
+            width = int(fmt.get("width") or 0)
+            height = int(fmt.get("height") or 0)
+        except (TypeError, ValueError):
+            continue
+        format_id = str(fmt.get("format_id") or "")
+        fmt_url = str(fmt.get("url") or "")
+        vcodec = str(fmt.get("vcodec") or "")
+        if not format_id or not fmt_url or width < 32 or height < 32:
+            continue
+        if vcodec.lower() == "none":
+            continue
+        try:
+            tbr = float(fmt.get("tbr") or fmt.get("vbr") or fmt.get("quality") or 0)
+        except (TypeError, ValueError):
+            tbr = 0.0
+        variant = {
+            "url": fmt_url,
+            "format_id": format_id,
+            "dash": True,
+            "tier": "DASH",
+            "rank": height * 100000 + int(tbr),
+            "label": f"{height}p • {width}×{height}",
+            "width": width,
+            "height": height,
+            "selector_height": height,
+            "extension": str(fmt.get("ext") or "mp4"),
+            "tbr": tbr,
+        }
+        previous = best_by_height.get(height)
+        if previous is None or (tbr, width) > (float(previous.get("tbr") or 0), int(previous.get("width") or 0)):
+            best_by_height[height] = variant
+    return sorted(
+        best_by_height.values(),
+        key=lambda item: (int(item["height"]), float(item.get("tbr") or 0)),
+        reverse=True,
+    )
+
+
+def _apply_facebook_story_dash_formats(
+    page: str,
+    media: dict[str, Any] | None,
+    formats: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    dash_variants = _facebook_story_dash_variants(formats)
+    if not dash_variants:
+        if media is not None:
+            media["dash_formats"] = formats or []
+        return media
+
+    import html
+    import re
+
+    meta = _facebook_story_meta_tags(page)
+    title_match = re.search(r"<title[^>]*>(.*?)</title\s*>", page, re.I | re.S)
+    page_title = (
+        re.sub(r"\s+", " ", html.unescape(title_match.group(1))).strip()
+        if title_match else ""
+    )
+    if page_title.lower() in {"facebook", "log in to facebook", "login"}:
+        page_title = ""
+
+    thumbnail = (media or {}).get("thumbnail")
+    if not thumbnail:
+        for key in ("og:image", "og:image:url", "twitter:image"):
+            candidate = html.unescape(str(meta.get(key) or "")).strip()
+            if candidate.startswith(("https://", "http://")) and "fbcdn.net" in candidate:
+                thumbnail = candidate.replace("&amp;", "&")
+                break
+
+    # Prefer DASH for a resolution when present, since it carries the actual
+    # representation ID needed for yt-dlp to download the correct stream and
+    # mux its matching audio. Keep progressive URLs only for other explicit
+    # resolutions, never for guessed/generic Story-canvas dimensions.
+    variants_by_height = {int(v["height"]): v for v in dash_variants}
+    if media and media.get("media_type") == "video":
+        for variant in media.get("variants") or []:
+            width, height = variant.get("width"), variant.get("height")
+            if not width or not height or variant.get("format_id"):
+                continue
+            try:
+                width, height = int(width), int(height)
+            except (TypeError, ValueError):
+                continue
+            if height not in variants_by_height:
+                variants_by_height[height] = dict(variant, width=width, height=height, selector_height=height)
+
+    variants = sorted(
+        variants_by_height.values(),
+        key=lambda item: (
+            int(item.get("height") or 0),
+            int(item.get("rank") or 0),
+        ),
+        reverse=True,
+    )
+    best = variants[0]
+    prior = media or {}
+    if prior.get("media_type") == "photo":
+        # In the absence of progressive URL data a video Story often looks like
+        # a photo because its only available direct URL is the poster image.
+        prior_duration = None
+    else:
+        prior_duration = prior.get("duration")
+    if not prior_duration:
+        duration_match = re.search(
+            r'(?<![\w$])(?:"?playable_duration_in_ms"?|playable_duration_in_ms)\s*[:=]\s*(\d+)',
+            page,
+            re.I,
+        )
+        if duration_match:
+            prior_duration = max(0, int(int(duration_match.group(1)) / 1000))
+
+    raw = dict(prior.get("raw") or {})
+    raw.update({
+        "_facebook_story_direct": True,
+        "_facebook_story_dash": True,
+        "extension": str(best.get("extension") or "mp4"),
+    })
+    return {
+        **prior,
+        "direct_url": str(best["url"]),
+        "media_type": "video",
+        "extension": str(best.get("extension") or "mp4"),
+        "thumbnail": thumbnail,
+        "title": prior.get("title") if prior.get("media_type") == "video" else (page_title or "Facebook Story"),
+        "duration": prior_duration,
+        "variants": variants,
+        "dash_formats": formats,
+        "width": best.get("width"),
+        "height": best.get("height"),
+        "raw": raw,
+    }
+
+
 def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
     """Extract available SD/HD Story video URLs and a preview image from page source."""
     import html
