@@ -14,6 +14,7 @@ def main() -> None:
     sys.path.insert(0, str(root))
 
     import core
+    import json
 
     video_page = r'''
         <html><head>
@@ -210,6 +211,63 @@ def main() -> None:
     assert selected_format["http_headers"]["User-Agent"] == "facebookexternalhit/1.1"
     assert selected_format["height"] == 1280
 
+    # Actual FacebookIE integration: Facebook often puts quality metadata in
+    # VideoConfig JS instances. The extractor must recover progressive HD/SD
+    # and the native DASH representation from the same authenticated HTML.
+    video_data = [{
+        "stream_type": "progressive",
+        "sd_src": "https://video.xx.fbcdn.net/story-progressive-sd.mp4?sig=sd",
+        "hd_src": "https://video.xx.fbcdn.net/story-progressive-hd.mp4?sig=hd",
+        "dash_manifest": quote(mpd, safe=""),
+        "playable_duration_in_ms": 16000,
+    }]
+    server_payload = {
+        "instances": [
+            [
+                "instance-id",
+                ["VideoConfig"],
+                [{
+                    "video_id": "1053343244400616",
+                    "videoData": video_data,
+                }],
+            ],
+        ],
+    }
+    native_page = (
+        "<html><head><title>Facebook Story Test</title></head><body>"
+        "<script>handleServerJS("
+        + json.dumps(server_payload, separators=(",", ":"))
+        + ");</script></body></html>"
+    )
+    native_info = core._extract_facebook_story_native_info(native_page, story_url)
+    assert native_info is not None, "Native FacebookIE parser did not recognize VideoConfig."
+    native_formats = native_info.get("formats") or []
+    assert any(str(f.get("format_id", "")).endswith("_hd_src") for f in native_formats), native_formats
+    assert any(str(f.get("format_id", "")).endswith("_sd_src") for f in native_formats), native_formats
+
+    native_variants = core._facebook_story_dash_variants(native_formats)
+    native_heights = [
+        int(v["height"]) for v in native_variants
+        if v.get("height") is not None
+    ]
+    assert 1280 in native_heights, native_variants
+    assert any(
+        v.get("tier") == "HD" and v.get("format_id", "").endswith("_hd_src")
+        for v in native_variants
+    ) or 1280 in native_heights, native_variants
+
+    native_media = core._apply_facebook_story_dash_formats(
+        native_page,
+        core._parse_facebook_story_page(native_page),
+        native_formats,
+    )
+    assert native_media is not None, "Native formats should create Story media data."
+    assert len(native_media["variants"]) >= 3, native_media["variants"]
+    assert any(v.get("format_id") and "1280×720" in v.get("label", "") for v in native_media["variants"]) or any(
+        v.get("height") == 1280 for v in native_media["variants"]
+    ), native_media["variants"]
+    print("FACEBOOK_STORY_NATIVE_IE_RELAY_FORMATS_TEST=PASS")
+
     photo_page = r'''
         <html><head><title>Story image</title>
         <meta property="og:image" content="https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/story.jpg?x=1&amp;y=2">
@@ -235,6 +293,7 @@ def main() -> None:
     print("FACEBOOK_STORY_DASH_MANIFEST_PARSE_TEST=PASS")
     print("FACEBOOK_STORY_DASH_VARIANTS_TEST=PASS")
     print("FACEBOOK_STORY_DASH_DOWNLOAD_SELECTOR_TEST=PASS")
+    print("FACEBOOK_STORY_NATIVE_IE_RELAY_FORMATS_TEST=PASS")
     print("FACEBOOK_STORY_PHOTO_PARSE_TEST=PASS")
     print("FACEBOOK_LOGIN_PAGE_REJECTION_TEST=PASS")
 
