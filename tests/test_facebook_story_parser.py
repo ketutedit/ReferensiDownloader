@@ -52,6 +52,51 @@ def main() -> None:
     assert variants[1]["selector_height"] == 640, variants[1]
     assert variants[1]["label"] == "SD • 360×640", variants[1]
 
+    # Regression test: MediaItem is immutable. Selecting a quality must use a
+    # copied item with a copied raw dict rather than assigning item.direct_url.
+    from dataclasses import replace
+    from dataclasses import FrozenInstanceError
+
+    item = core.MediaItem(
+        slide_index=1,
+        title="Facebook Story",
+        uploader="Facebook",
+        duration=16,
+        thumbnail=video["thumbnail"],
+        qualities=[core.QualityOption(v["label"], v["selector_height"]) for v in variants],
+        raw={"_facebook_story_direct": True, "_facebook_story_variants": variants},
+        media_type="video",
+        direct_url=video["direct_url"],
+        width=720,
+        height=1280,
+    )
+    original_url = item.direct_url
+    selected_variant = next(v for v in variants if v["tier"] == "SD")
+    selected_raw = dict(item.raw)
+    selected_raw["extension"] = selected_variant["extension"]
+    selected_raw["_selected_story_quality"] = selected_variant["label"]
+    selected_item = replace(
+        item,
+        direct_url=selected_variant["url"],
+        raw=selected_raw,
+        height=selected_variant.get("height") or item.height,
+        width=selected_variant.get("width") or item.width,
+    )
+    assert selected_item.direct_url == selected_variant["url"]
+    assert item.direct_url == original_url, "Selecting a quality mutated the original MediaItem."
+    assert selected_item.raw is not item.raw, "Quality copy must have an independent raw dict."
+    try:
+        item.direct_url = selected_variant["url"]
+    except (FrozenInstanceError, AttributeError):
+        immutable_assignment_blocked = True
+    else:
+        immutable_assignment_blocked = False
+    assert immutable_assignment_blocked, "Test fixture should preserve frozen MediaItem behavior."
+
+    app_source = (root / "app.py").read_text(encoding="utf-8")
+    assert 'item.direct_url = str(selected_variant["url"])' not in app_source
+    assert "selected_item = replace(" in app_source
+
     photo_page = r'''
         <html><head><title>Story image</title>
         <meta property="og:image" content="https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/story.jpg?x=1&amp;y=2">
@@ -73,6 +118,7 @@ def main() -> None:
     print("FACEBOOK_STORY_VIDEO_PARSE_TEST=PASS")
     print("FACEBOOK_STORY_QUALITY_VARIANTS_TEST=PASS")
     print("FACEBOOK_STORY_THUMBNAIL_TEST=PASS")
+    print("FACEBOOK_STORY_IMMUTABLE_QUALITY_SELECTION_TEST=PASS")
     print("FACEBOOK_STORY_PHOTO_PARSE_TEST=PASS")
     print("FACEBOOK_LOGIN_PAGE_REJECTION_TEST=PASS")
 
