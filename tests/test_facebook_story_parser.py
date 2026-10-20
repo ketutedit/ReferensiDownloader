@@ -106,6 +106,110 @@ def main() -> None:
     assert 'item.direct_url = str(selected_variant["url"])' not in app_source
     assert "selected_item = replace(" in app_source
 
+    # Reproduce a Facebook page whose only HD options are embedded in a DASH
+    # manifest. The Story canvas can be 1080x1920 while progressive URL is SD;
+    # Quality must come from real DASH representations instead.
+    from urllib.parse import quote
+    from tempfile import TemporaryDirectory
+
+    story_url = (
+        "https://www.facebook.com/stories/1419311178178521/"
+        "UzpfSVNDOjEwNTMzNDMyNDQ0MDA2MTY=/?view_single=false"
+    )
+    mpd = '''<?xml version="1.0" encoding="UTF-8"?>
+    <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static"
+         mediaPresentationDuration="PT16S" minBufferTime="PT1S">
+      <Period id="p0" duration="PT16S">
+        <AdaptationSet id="video" contentType="video" mimeType="video/mp4" segmentAlignment="true">
+          <Representation id="v360" mimeType="video/mp4" codecs="avc1.4D401E"
+                          bandwidth="180000" width="360" height="640" frameRate="30">
+            <BaseURL>https://video.xx.fbcdn.net/story-v360.mp4?sig=sd</BaseURL>
+          </Representation>
+          <Representation id="v540" mimeType="video/mp4" codecs="avc1.4D401F"
+                          bandwidth="360000" width="540" height="960" frameRate="30">
+            <BaseURL>https://video.xx.fbcdn.net/story-v540.mp4?sig=mid</BaseURL>
+          </Representation>
+          <Representation id="v720" mimeType="video/mp4" codecs="avc1.4D4020"
+                          bandwidth="770000" width="720" height="1280" frameRate="30">
+            <BaseURL>https://video.xx.fbcdn.net/story-v720.mp4?sig=hd</BaseURL>
+          </Representation>
+        </AdaptationSet>
+        <AdaptationSet id="audio" contentType="audio" mimeType="audio/mp4">
+          <Representation id="a1" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="96000">
+            <BaseURL>https://video.xx.fbcdn.net/story-audio.m4a?sig=audio</BaseURL>
+          </Representation>
+        </AdaptationSet>
+      </Period>
+    </MPD>'''
+    encoded_mpd = quote(mpd, safe="")
+    dash_page = (
+        '<html><head><title>Facebook Story</title></head><body>'
+        '<script type="application/json">{"dash_manifest_xml_string":"'
+        + encoded_mpd
+        + '"}</script></body></html>'
+    )
+    dash_formats = core._extract_facebook_story_dash_formats(dash_page, story_url)
+    assert dash_formats, "DASH manifest should produce video/audio formats."
+    assert any(str(f.get("acodec") or "").lower() != "none" and not f.get("height") for f in dash_formats), dash_formats
+
+    dash_variants = core._facebook_story_dash_variants(dash_formats)
+    dash_heights = [v["height"] for v in dash_variants]
+    assert dash_heights == [1280, 960, 640], dash_variants
+    assert dash_variants[0]["width"] == 720, dash_variants[0]
+    assert dash_variants[0]["label"] == "1280p • 720×1280", dash_variants[0]
+    assert dash_variants[0]["format_id"] in {str(f.get("format_id")) for f in dash_formats}
+
+    merged_story = core._apply_facebook_story_dash_formats(dash_page, video, dash_formats)
+    assert merged_story is not None and merged_story["media_type"] == "video", merged_story
+    assert [v["height"] for v in merged_story["variants"]][:3] == [1280, 960, 640], merged_story
+    assert merged_story["variants"][0]["format_id"] == dash_variants[0]["format_id"]
+    assert merged_story["direct_url"] == dash_variants[0]["url"]
+
+    # Mock the downloader to prove choosing HD uses its actual DASH format ID,
+    # includes the matching audio track, and applies Facebook's media User-Agent.
+    captured = {}
+    class FakeYoutubeDL:
+        def __init__(self, opts):
+            captured["opts"] = opts
+        def __enter__(self):
+            return self
+        def __exit__(self, *_):
+            return False
+        def process_ie_result(self, info_dict, download=True):
+            captured["info"] = info_dict
+            captured["download"] = download
+            return info_dict
+
+    original_youtube_dl = core.yt_dlp.YoutubeDL
+    core.yt_dlp.YoutubeDL = FakeYoutubeDL
+    try:
+        with TemporaryDirectory(prefix="fb-story-dash-test-") as out_dir:
+            core.download_facebook_story_dash_format(
+                title="Facebook Story Test",
+                source_url=story_url,
+                thumbnail=video["thumbnail"],
+                duration=16,
+                formats=dash_formats,
+                selected_format_id=dash_variants[0]["format_id"],
+                output_dir=out_dir,
+                container="mp4",
+                audio_only=False,
+                editing_compatible=False,
+            )
+    finally:
+        core.yt_dlp.YoutubeDL = original_youtube_dl
+
+    assert captured["opts"]["format"] == (
+        f'{dash_variants[0]["format_id"]}+bestaudio/{dash_variants[0]["format_id"]}'
+    ), captured["opts"]["format"]
+    assert captured["download"] is True
+    selected_format = next(
+        f for f in captured["info"]["formats"]
+        if str(f.get("format_id")) == dash_variants[0]["format_id"]
+    )
+    assert selected_format["http_headers"]["User-Agent"] == "facebookexternalhit/1.1"
+    assert selected_format["height"] == 1280
+
     photo_page = r'''
         <html><head><title>Story image</title>
         <meta property="og:image" content="https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/story.jpg?x=1&amp;y=2">
@@ -128,6 +232,9 @@ def main() -> None:
     print("FACEBOOK_STORY_QUALITY_VARIANTS_TEST=PASS")
     print("FACEBOOK_STORY_THUMBNAIL_TEST=PASS")
     print("FACEBOOK_STORY_IMMUTABLE_QUALITY_SELECTION_TEST=PASS")
+    print("FACEBOOK_STORY_DASH_MANIFEST_PARSE_TEST=PASS")
+    print("FACEBOOK_STORY_DASH_VARIANTS_TEST=PASS")
+    print("FACEBOOK_STORY_DASH_DOWNLOAD_SELECTOR_TEST=PASS")
     print("FACEBOOK_STORY_PHOTO_PARSE_TEST=PASS")
     print("FACEBOOK_LOGIN_PAGE_REJECTION_TEST=PASS")
 
