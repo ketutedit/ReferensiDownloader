@@ -1,0 +1,31 @@
+name: Inspect bundled Mac build scripts
+
+on:
+  push:
+    branches: [feature-timeclip-mac]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct source and inspect build scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat source/chunks/part00a.b64 source/chunks/part00b.b64 source/chunks/part01.b64 source/chunks/part02.b64 source/chunks/part03.b64 source/chunks/part04.b64 source/chunks/part05.b64 source/chunks/part06.b64 | tr -d '\r\n' | base64 -D > .ci-source.zip
+          echo "236d70e4680e87c53c62c5db15ee96d7d56320578d065db4c421051fc6f35216  .ci-source.zip" | shasum -a 256 -c -
+          mkdir .ci-src
+          unzip -q .ci-source.zip -d .ci-src
+          SOURCE_ROOT="$(dirname "$(find .ci-src -type f -name BUILD_DISTRIBUTABLE.command -print -quit)")"
+          echo "SOURCE_ROOT=$SOURCE_ROOT"
+          echo "===== BUILD_DISTRIBUTABLE.command ====="
+          cat "$SOURCE_ROOT/BUILD_DISTRIBUTABLE.command"
+          echo "===== build_macos.sh ====="
+          cat "$SOURCE_ROOT/build_macos.sh"
+          echo "===== core imports / pyinstaller commands ====="
+          grep -nE 'yt.dlp|pip install|pyinstaller|PyInstaller|\.buildenv|venv|requirements' "$SOURCE_ROOT"/*.sh "$SOURCE_ROOT"/*.command || true
