@@ -54,8 +54,9 @@ def main() -> None:
     assert variants[1]["url"] == (
         "https://video.xx.fbcdn.net/v/t42.1790-2/story-sd.mp4?oh=sd&oe=def"
     ), variants[1]
+    assert variants[1]["width"] == 360 and variants[1]["height"] == 640, variants[1]
     assert variants[1]["selector_height"] == 640, variants[1]
-    assert variants[1]["label"] == "SD • Standard", variants[1]
+    assert variants[1]["label"] == "SD • 360×640", variants[1]
     # Global width:1080,height:1920 describes Story canvas; it must never be
     # misrepresented as the decoded dimensions of the SD-only URL.
     assert "1080×1920" not in variants[0]["label"]
