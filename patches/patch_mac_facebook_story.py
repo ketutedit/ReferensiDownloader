@@ -70,6 +70,102 @@ def _facebook_story_meta_tags(page: str) -> dict[str, str]:
     return result
 
 
+def _facebook_story_target_id(source_url: str) -> str:
+    """Decode the media identifier embedded in /stories/<owner>/<base64-media-id>/."""
+    import base64
+    import re
+    from urllib.parse import urlparse
+
+    segments = [part for part in urlparse(source_url).path.split("/") if part]
+    if "stories" in segments:
+        index = segments.index("stories")
+        for token in segments[index + 2:index + 3]:
+            try:
+                padding = "=" * ((4 - len(token) % 4) % 4)
+                decoded = base64.urlsafe_b64decode(token + padding).decode("utf-8", "ignore")
+            except Exception:
+                decoded = ""
+            ids = re.findall(r"\d{8,}", decoded)
+            if ids:
+                return ids[-1]
+        for part in segments[index + 1:]:
+            if part.isdigit():
+                return part
+    ids = re.findall(r"\d{8,}", source_url)
+    return ids[-1] if ids else "facebook-story"
+
+
+def _extract_facebook_story_native_info(
+    page: str,
+    source_url: str,
+) -> dict[str, Any] | None:
+    """Run yt-dlp's native Facebook webpage parser against the page already fetched.
+
+    Facebook's formats are often nested inside data-sjs / RelayPrefetchedStreamCache
+    data. Its FacebookIE knows how to decode those structures and DASH manifests,
+    while the custom regex parser below is intentionally only a fallback.
+    The supplied page is reused, so cookies/session are never sent to another site.
+    """
+    if not page or not any(marker in page for marker in (
+        "handleServerJS", "data-sjs>", "RelayPrefetchedStreamCache", "VideoConfig",
+        "dash_manifest", "playable_url",
+    )):
+        return None
+    try:
+        import yt_dlp
+        from yt_dlp.extractor.facebook import FacebookIE
+    except Exception:
+        return None
+
+    video_id = _facebook_story_target_id(source_url)
+    try:
+        with yt_dlp.YoutubeDL({
+            "quiet": True,
+            "no_warnings": True,
+            "ignoreconfig": True,
+            "skip_download": True,
+        }) as ydl:
+            extractor = FacebookIE(ydl)
+
+            # _extract_from_url normally downloads the page itself. Return the
+            # authenticated page already retrieved in analyze_facebook_story,
+            # regardless of the URL argument, so no duplicate request occurs.
+            extractor._download_webpage = lambda requested_url, requested_id, *args, **kwargs: page
+            result = extractor._extract_from_url(source_url, video_id)
+
+        if not isinstance(result, dict):
+            return None
+        if result.get("_type") == "playlist":
+            entries = list(result.get("entries") or [])
+            if not entries:
+                return None
+            target_matches = [
+                entry for entry in entries
+                if isinstance(entry, dict) and str(entry.get("id") or "") == video_id
+            ]
+            candidates = target_matches or [
+                entry for entry in entries
+                if isinstance(entry, dict) and entry.get("formats")
+            ]
+            if not candidates:
+                return None
+            result = candidates[0]
+
+        formats = [
+            dict(fmt) for fmt in (result.get("formats") or [])
+            if isinstance(fmt, dict) and fmt.get("url") and fmt.get("format_id")
+        ]
+        if not formats:
+            return None
+        result = dict(result)
+        result["formats"] = formats
+        return result
+    except Exception:
+        # The page can still be handled by the explicit-field parser. Do not
+        # expose internal parser details or raw account page contents to the UI.
+        return None
+
+
 def _extract_facebook_story_dash_formats(
     page: str,
     source_url: str,
