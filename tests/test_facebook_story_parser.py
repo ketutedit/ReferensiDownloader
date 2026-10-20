@@ -22,7 +22,6 @@ def main() -> None:
         </head><body><script type="application/json">
         {
           width:1080,height:1920,
-          hd_width:720,hd_height:1280,
           hd_src_no_ratelimit:"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-hd.mp4?oh=hd\u0026oe=def",
           "sd_width":360,"sd_height":640,
           sd_src_no_ratelimit:"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-sd.mp4?oh=sd\u0026oe=def",
@@ -45,13 +44,21 @@ def main() -> None:
     variants = video["variants"]
     assert len(variants) == 2, variants
     assert variants[0]["tier"] == "HD", variants
-    assert variants[0]["width"] == 720 and variants[0]["height"] == 1280, variants[0]
+    assert variants[0]["url"] == (
+        "https://video.xx.fbcdn.net/v/t42.1790-2/story-hd.mp4?oh=hd&oe=def"
+    ), variants[0]
+    assert variants[0]["width"] is None and variants[0]["height"] is None, variants[0]
     assert variants[0]["selector_height"] == 1280, variants[0]
-    assert variants[0]["label"] == "HD • 720×1280", variants[0]
+    assert variants[0]["label"] == "HD • Highest available", variants[0]
     assert variants[1]["tier"] == "SD", variants
-    assert variants[1]["width"] == 360 and variants[1]["height"] == 640, variants[1]
+    assert variants[1]["url"] == (
+        "https://video.xx.fbcdn.net/v/t42.1790-2/story-sd.mp4?oh=sd&oe=def"
+    ), variants[1]
     assert variants[1]["selector_height"] == 640, variants[1]
-    assert variants[1]["label"] == "SD • 360×640", variants[1]
+    assert variants[1]["label"] == "SD • Standard", variants[1]
+    # Global width:1080,height:1920 describes Story canvas; it must never be
+    # misrepresented as the decoded dimensions of the SD-only URL.
+    assert "1080×1920" not in variants[0]["label"]
 
     # Regression test: MediaItem is immutable. Selecting a quality must use a
     # copied item with a copied raw dict rather than assigning item.direct_url.
