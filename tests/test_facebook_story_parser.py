@@ -106,6 +106,8 @@ def main() -> None:
     app_source = (root / "app.py").read_text(encoding="utf-8")
     assert 'item.direct_url = str(selected_variant["url"])' not in app_source
     assert "selected_item = replace(" in app_source
+    assert "download_facebook_story_dash_format(" in app_source
+    assert 'selected_format_id=str(selected_variant["format_id"])' in app_source
 
     # Reproduce a Facebook page whose only HD options are embedded in a DASH
     # manifest. The Story canvas can be 1080x1920 while progressive URL is SD;
