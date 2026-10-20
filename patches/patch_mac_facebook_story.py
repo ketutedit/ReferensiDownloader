@@ -679,25 +679,42 @@ def patch_app_download(source_root: Path) -> None:
                     )
                 if selected_variant is None and variants:
                     selected_variant = variants[0]
+                selected_url = str(item.direct_url or "")
+                selected_item = item
                 if selected_variant and selected_variant.get("url"):
-                    item.direct_url = str(selected_variant["url"])
-                    item.raw["extension"] = str(selected_variant.get("extension") or "mp4")
-                    item.raw["_selected_story_quality"] = str(
+                    selected_url = str(selected_variant["url"])
+                    # MediaItem is immutable (frozen dataclass). Build a shallow
+                    # copy with a copied raw dict rather than assigning to
+                    # item.direct_url / mutating metadata on the original item.
+                    from dataclasses import replace
+                    selected_raw = dict(item.raw)
+                    selected_raw["extension"] = str(selected_variant.get("extension") or "mp4")
+                    selected_raw["_selected_story_quality"] = str(
                         selected_variant.get("label") or "Best Available"
                     )
+                    selected_item = replace(
+                        item,
+                        direct_url=selected_url,
+                        raw=selected_raw,
+                        height=selected_variant.get("height") or item.height,
+                        width=selected_variant.get("width") or item.width,
+                    )
+
+                if not selected_url:
+                    raise RuntimeError("URL media Facebook Story untuk kualitas terpilih tidak tersedia.")
 
                 # Time Range and MP3 need yt-dlp/FFmpeg post-processing; use
                 # the selected signed media URL directly, not the Story page.
                 if self.time_range is not None or self.audio_only:
                     download_media(
-                        item.direct_url, self.output_dir, None, self.container,
+                        selected_url, self.output_dir, None, self.container,
                         self.audio_only, self.editing_compatible,
                         progress_cb=hook, cookie_browser=None,
                         time_range=self.time_range,
                     )
                 else:
                     download_direct_item(
-                        item, self.output_dir, editing_compatible=self.editing_compatible,
+                        selected_item, self.output_dir, editing_compatible=self.editing_compatible,
                         progress_cb=hook, include_slide_prefix=False,
                     )
                 continue
