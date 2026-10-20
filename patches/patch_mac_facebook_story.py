@@ -295,48 +295,107 @@ def _extract_facebook_story_dash_formats(
 def _facebook_story_dash_variants(
     formats: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Build one truthful selectable option per actual DASH video resolution."""
+    """Build truthful choices from real DASH dimensions and explicit FB HD/SD streams."""
     best_by_height: dict[int, dict[str, Any]] = {}
+    best_by_tier: dict[str, dict[str, Any]] = {}
+
     for fmt in formats or []:
         if not isinstance(fmt, dict):
-            continue
-        try:
-            width = int(fmt.get("width") or 0)
-            height = int(fmt.get("height") or 0)
-        except (TypeError, ValueError):
             continue
         format_id = str(fmt.get("format_id") or "")
         fmt_url = str(fmt.get("url") or "")
         vcodec = str(fmt.get("vcodec") or "")
-        if not format_id or not fmt_url or width < 32 or height < 32:
+        if not format_id or not fmt_url:
             continue
         if vcodec.lower() == "none":
             continue
+
+        try:
+            width = int(fmt.get("width") or 0)
+            height = int(fmt.get("height") or 0)
+        except (TypeError, ValueError):
+            width, height = 0, 0
         try:
             tbr = float(fmt.get("tbr") or fmt.get("vbr") or fmt.get("quality") or 0)
         except (TypeError, ValueError):
             tbr = 0.0
+
+        if width >= 32 and height >= 32:
+            variant = {
+                "url": fmt_url,
+                "format_id": format_id,
+                "dash": True,
+                "tier": "DASH",
+                "rank": height * 100000 + int(tbr),
+                "label": f"{height}p • {width}×{height}",
+                "width": width,
+                "height": height,
+                "selector_height": height,
+                "extension": str(fmt.get("ext") or "mp4"),
+                "tbr": tbr,
+            }
+            previous = best_by_height.get(height)
+            if previous is None or (
+                tbr, width
+            ) > (
+                float(previous.get("tbr") or 0),
+                int(previous.get("width") or 0),
+            ):
+                best_by_height[height] = variant
+            continue
+
+        # yt-dlp's FacebookIE labels legacy progressive URLs with explicit
+        # _hd_src/_sd_src IDs and a quality tag, but Facebook doesn't expose
+        # actual dimensions for those formats. Keep them selectable without
+        # pretending that the Story canvas size equals the downloaded stream.
+        lower_id = format_id.lower()
+        if re.search(r"(?:^|[_\-.])hd(?:[_\-.]|$)", lower_id) or "_hd_src" in lower_id:
+            tier, selector_height, rank = "HD", 720, 72000000 + int(tbr)
+        elif re.search(r"(?:^|[_\-.])sd(?:[_\-.]|$)", lower_id) or "_sd_src" in lower_id:
+            tier, selector_height, rank = "SD", 360, 36000000 + int(tbr)
+        else:
+            continue
+
         variant = {
             "url": fmt_url,
             "format_id": format_id,
-            "dash": True,
-            "tier": "DASH",
-            "rank": height * 100000 + int(tbr),
-            "label": f"{height}p • {width}×{height}",
-            "width": width,
-            "height": height,
-            "selector_height": height,
+            "dash": False,
+            "tier": tier,
+            "rank": rank,
+            "label": f"{tier} • Facebook source (resolution not reported)",
+            "width": None,
+            "height": None,
+            "selector_height": selector_height,
             "extension": str(fmt.get("ext") or "mp4"),
             "tbr": tbr,
         }
-        previous = best_by_height.get(height)
-        if previous is None or (tbr, width) > (float(previous.get("tbr") or 0), int(previous.get("width") or 0)):
-            best_by_height[height] = variant
-    return sorted(
+        previous = best_by_tier.get(tier)
+        if previous is None or float(variant["tbr"]) > float(previous.get("tbr") or 0):
+            best_by_tier[tier] = variant
+
+    actual = sorted(
         best_by_height.values(),
         key=lambda item: (int(item["height"]), float(item.get("tbr") or 0)),
         reverse=True,
     )
+
+    # If a real DASH representation already supplies HD resolution, prefer it
+    # over an opaque progressive HD URL. Otherwise retain the explicit HD tier.
+    max_actual_height = max((int(item["height"]) for item in actual), default=0)
+    if max_actual_height >= 720:
+        best_by_tier.pop("HD", None)
+
+    known_urls = {item["url"] for item in actual}
+    tiered = [
+        item for tier, item in best_by_tier.items()
+        if item["url"] not in known_urls
+    ]
+    tiered.sort(key=lambda item: int(item["rank"]), reverse=True)
+
+    # Prefer true dimensioned DASH formats, but if the page only provides
+    # legacy progressive HD/SD, still expose those explicit alternatives.
+    return actual + tiered
+
 
 
 def _apply_facebook_story_dash_formats(
@@ -370,31 +429,49 @@ def _apply_facebook_story_dash_formats(
                 thumbnail = candidate.replace("&amp;", "&")
                 break
 
-    # Prefer DASH for a resolution when present, since it carries the actual
-    # representation ID needed for yt-dlp to download the correct stream and
-    # mux its matching audio. Keep progressive URLs only for other explicit
-    # resolutions, never for guessed/generic Story-canvas dimensions.
-    variants_by_height = {int(v["height"]): v for v in dash_variants}
+    # Use actual DASH resolutions first, and retain progressive HD/SD options
+    # only when their URLs are distinct from the DASH representations.
+    variants_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    known_urls: set[str] = set()
+    for variant in dash_variants:
+        height = variant.get("height")
+        if height:
+            key = ("resolution", str(int(height)))
+        else:
+            key = ("tier", str(variant.get("tier") or "Best"))
+        variants_by_key[key] = variant
+        known_urls.add(str(variant.get("url") or ""))
+
     if media and media.get("media_type") == "video":
         for variant in media.get("variants") or []:
+            variant_url = str(variant.get("url") or "")
+            if not variant_url or variant_url in known_urls:
+                continue
             width, height = variant.get("width"), variant.get("height")
-            if not width or not height or variant.get("format_id"):
-                continue
-            try:
-                width, height = int(width), int(height)
-            except (TypeError, ValueError):
-                continue
-            if height not in variants_by_height:
-                variants_by_height[height] = dict(variant, width=width, height=height, selector_height=height)
+            if width and height:
+                try:
+                    width, height = int(width), int(height)
+                except (TypeError, ValueError):
+                    width, height = None, None
+            else:
+                width, height = None, None
+            if height:
+                key = ("resolution", str(height))
+                if key not in variants_by_key:
+                    variants_by_key[key] = dict(variant, width=width, height=height, selector_height=height)
+            else:
+                key = ("tier", str(variant.get("tier") or "Best"))
+                if key not in variants_by_key:
+                    variants_by_key[key] = dict(variant, width=None, height=None)
+            known_urls.add(variant_url)
 
-    variants = sorted(
-        variants_by_height.values(),
-        key=lambda item: (
-            int(item.get("height") or 0),
+    def variant_order(item):
+        return (
+            int(item.get("height") or item.get("selector_height") or 0),
             int(item.get("rank") or 0),
-        ),
-        reverse=True,
-    )
+        )
+
+    variants = sorted(variants_by_key.values(), key=variant_order, reverse=True)
     best = variants[0]
     prior = media or {}
     if prior.get("media_type") == "photo":
