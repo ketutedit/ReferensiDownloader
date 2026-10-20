@@ -799,7 +799,52 @@ def analyze_facebook_story(
                     )
                     continue
 
+                def fetch_dash_manifest(manifest_url: str):
+                    if browser_session is not None:
+                        response = browser_session.get(
+                            manifest_url,
+                            headers={
+                                **request_headers,
+                                "Accept": "application/dash+xml,application/xml,text/xml,*/*;q=0.8",
+                                "Referer": last_final_url or page_url,
+                                "Sec-Fetch-Dest": "empty",
+                                "Sec-Fetch-Mode": "cors",
+                            },
+                            timeout=25,
+                            allow_redirects=True,
+                        )
+                        status = int(response.status_code)
+                        effective_url = str(response.url)
+                        response_text = str(response.text or "")
+                        try:
+                            response.close()
+                        except Exception:
+                            pass
+                        if status >= 400:
+                            return None
+                        return response_text, effective_url
+
+                    request = urllib.request.Request(
+                        manifest_url,
+                        headers={
+                            "User-Agent": "facebookexternalhit/1.1",
+                            "Accept": "application/dash+xml,application/xml,text/xml,*/*;q=0.8",
+                            "Referer": last_final_url or page_url,
+                        },
+                    )
+                    with opener.open(request, timeout=25) as response:
+                        return (
+                            response.read(12 * 1024 * 1024).decode("utf-8", errors="replace"),
+                            response.geturl(),
+                        )
+
                 media = _parse_facebook_story_page(page)
+                dash_formats = _extract_facebook_story_dash_formats(
+                    page,
+                    last_final_url or page_url,
+                    manifest_fetcher=fetch_dash_manifest,
+                )
+                media = _apply_facebook_story_dash_formats(page, media, dash_formats)
                 if media:
                     break
 
@@ -856,6 +901,7 @@ def analyze_facebook_story(
                     "extension": extension,
                     "_facebook_story_direct": True,
                     "_facebook_story_variants": variants,
+                    "_facebook_story_dash_formats": list(media.get("dash_formats") or []),
                 })
                 best_variant = variants[0] if variants else {}
                 selected_url = str(best_variant.get("url") or media["direct_url"])
