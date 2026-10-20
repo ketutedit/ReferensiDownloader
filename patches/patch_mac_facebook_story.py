@@ -951,6 +951,145 @@ def analyze_facebook_story(
 '''
 
 
+FACEBOOK_STORY_DOWNLOAD_HELPER = r'''
+def download_facebook_story_dash_format(
+    title: str,
+    source_url: str,
+    thumbnail: str | None,
+    duration: float | None,
+    formats: list[dict[str, Any]],
+    selected_format_id: str,
+    output_dir: str,
+    container: str = "mp4",
+    audio_only: bool = False,
+    editing_compatible: bool = False,
+    progress_cb=None,
+    time_range: tuple[float, float] | None = None,
+) -> None:
+    """Download the actual selected Facebook DASH representation using yt-dlp.
+
+    DASH video representations are often video-only. The selector first combines
+    the chosen video format ID with the best audio representation from the same
+    manifest; it falls back to that exact video format rather than silently
+    downloading a lower-resolution progressive URL.
+    """
+    import hashlib
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp belum tersedia di aplikasi.")
+    if editing_compatible and not audio_only and (
+        shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None
+    ):
+        raise RuntimeError("FFmpeg dan FFprobe diperlukan untuk Smart Editing MP4.")
+    if time_range is not None and shutil.which("ffmpeg") is None:
+        raise RuntimeError("FFmpeg diperlukan untuk memotong Facebook Story berdasarkan Time Range.")
+
+    available_formats = [dict(fmt) for fmt in (formats or []) if isinstance(fmt, dict)]
+    selected = next(
+        (fmt for fmt in available_formats if str(fmt.get("format_id") or "") == str(selected_format_id)),
+        None,
+    )
+    if selected is None:
+        raise RuntimeError(
+            "Format DASH yang dipilih tidak ditemukan pada manifest Facebook Story. "
+            "Analisis ulang Story, lalu pilih kualitas yang tersedia."
+        )
+
+    for fmt in available_formats:
+        headers = dict(fmt.get("http_headers") or {})
+        # Facebook's own extractor uses this non-browser UA for media segments;
+        # some CDN endpoints return SD or 403 with the default Chrome UA.
+        headers.setdefault("User-Agent", "facebookexternalhit/1.1")
+        fmt["http_headers"] = headers
+        downloader_options = dict(fmt.get("downloader_options") or {})
+        downloader_options.setdefault("http_chunk_size", 250 << 20)
+        fmt["downloader_options"] = downloader_options
+
+    out = Path(output_dir).expanduser()
+    out.mkdir(parents=True, exist_ok=True)
+    temp_root: Path | None = None
+    download_root = out
+    if editing_compatible and not audio_only:
+        temp_root = Path(tempfile.mkdtemp(prefix=".referensi_fb_story_", dir=str(out)))
+        download_root = temp_root
+
+    def hook(data: dict[str, Any]) -> None:
+        if progress_cb:
+            progress_cb(data)
+
+    story_id = "story-" + hashlib.sha1(source_url.encode("utf-8", errors="ignore")).hexdigest()[:10]
+    info = {
+        "id": story_id,
+        "title": title or "Facebook Story",
+        "webpage_url": source_url,
+        "original_url": source_url,
+        "extractor": "Facebook Story DASH",
+        "extractor_key": "Facebook",
+        "thumbnail": thumbnail,
+        "duration": duration,
+        "formats": available_formats,
+    }
+
+    opts: dict[str, Any] = {
+        "quiet": True,
+        "no_warnings": True,
+        "ignoreconfig": True,
+        "noplaylist": True,
+        "paths": {"home": str(download_root)},
+        "outtmpl": {"default": "%(title).160B [%(id)s].%(ext)s"},
+        "progress_hooks": [hook],
+        "windowsfilenames": False,
+        "continuedl": True,
+        "retries": 10,
+        "fragment_retries": 10,
+        "extractor_retries": 3,
+        "concurrent_fragment_downloads": 4,
+        "merge_output_format": "mp4/mkv" if editing_compatible else container,
+    }
+
+    if audio_only:
+        opts.update({
+            "format": "bestaudio/best",
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "0",
+            }],
+        })
+    else:
+        format_id = str(selected_format_id)
+        if str(selected.get("acodec") or "").lower() == "none":
+            opts["format"] = f"{format_id}+bestaudio/{format_id}"
+        else:
+            opts["format"] = format_id
+
+    if time_range is not None:
+        from yt_dlp.utils import download_range_func
+        start_time, end_time = time_range
+        if start_time < 0 or end_time <= start_time:
+            raise ValueError("Rentang waktu Facebook Story tidak valid.")
+        opts["download_ranges"] = download_range_func(None, [(start_time, end_time)])
+        opts["force_keyframes_at_cuts"] = True
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            ydl.process_ie_result(info, download=True)
+
+        if editing_compatible and not audio_only:
+            source = _find_downloaded_media(download_root)
+            if not source:
+                raise RuntimeError("File DASH Facebook Story tidak ditemukan setelah download.")
+            destination = _unique_output_path(out, source.stem, ".mp4")
+            _smart_finalize_editor_mp4(source, destination, progress_cb)
+    finally:
+        if temp_root and temp_root.exists():
+            shutil.rmtree(temp_root, ignore_errors=True)
+'''
+
+
 def patch_core(source_root: Path) -> None:
     path = source_root / "core.py"
     text = path.read_text(encoding="utf-8")
@@ -958,7 +1097,7 @@ def patch_core(source_root: Path) -> None:
         text,
         '''def analyze_url(url: str, cookie_browser: str | None = "auto") -> MediaInfo:
 ''',
-        FACEBOOK_STORY_HELPERS + '''def analyze_url(url: str, cookie_browser: str | None = "auto") -> MediaInfo:
+        FACEBOOK_STORY_HELPERS + FACEBOOK_STORY_DOWNLOAD_HELPER + '''def analyze_url(url: str, cookie_browser: str | None = "auto") -> MediaInfo:
 ''',
         "insert Facebook Story parser and analyzer",
     )
