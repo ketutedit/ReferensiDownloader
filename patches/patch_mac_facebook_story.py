@@ -120,18 +120,29 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
         local_pos = position - left
 
         if tier == "SD":
+            # These pairs are explicit stream-tier dimensions. Never use the
+            # generic Story canvas width/height: those can describe the 1080x1920
+            # Story container while the only discovered CDN URL is a 360x640 file.
             pairs = (
                 ("sd_width", "sd_height"),
                 ("video_sd_width", "video_sd_height"),
                 ("low_width", "low_height"),
                 ("width_sd", "height_sd"),
             )
-        else:
+        elif tier == "HD":
             pairs = (
                 ("hd_width", "hd_height"),
+                ("video_hd_width", "video_hd_height"),
+                ("width_hd", "height_hd"),
                 ("original_width", "original_height"),
-                ("video_width", "video_height"),
-                ("width", "height"),
+            )
+        else:
+            # Generic width/height are intentionally excluded for "Best":
+            # without stream-specific evidence we must not invent a resolution.
+            pairs = (
+                ("best_width", "best_height"),
+                ("playable_width", "playable_height"),
+                ("stream_width", "stream_height"),
             )
 
         def nearest_number(key: str):
@@ -185,12 +196,18 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
                 continue
         if tier in variants_by_tier:
             continue
+        # Facebook often serializes these keys in a JavaScript object as
+        # hd_src:"...", sd_src:"..." (unquoted key), not strict JSON
+        # "hd_src":"...". Accept both forms and either quote style for values.
         pattern = re.compile(
-            r'"' + re.escape(field) + r'"\s*:\s*"((?:\\.|[^"\\])*)"',
+            r"""(?<![\w$])(?:"?FIELD"?|FIELD)\s*[:=]\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')""".replace(
+                "FIELD", re.escape(field)
+            ),
             re.I,
         )
         for match in pattern.finditer(page):
-            candidate = decode_match(match.group(1))
+            raw_url = match.group(1) if match.group(1) is not None else match.group(2)
+            candidate = decode_match(raw_url)
             if not valid_media_url(candidate, "video") or candidate in seen_urls:
                 continue
             width, height = dimensions_near(match.start(), tier)
@@ -234,7 +251,7 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
                     "url": candidate,
                     "tier": "Best",
                     "rank": 50,
-                    "label": f"Best Available • {width}×{height}" if width and height else "Best Available",
+                    "label": f"Best Available • {width}×{height}" if width and height else "Best Available • Resolution unknown",
                     "width": width,
                     "height": height,
                     "selector_height": int(height or 1280),
@@ -278,7 +295,7 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
                     "url": candidate,
                     "tier": "Best",
                     "rank": 10,
-                    "label": "Best Available",
+                    "label": "Best Available • Resolution unknown",
                     "width": None,
                     "height": None,
                     "selector_height": 1280,
