@@ -1011,13 +1011,45 @@ def analyze_facebook_story(
                             response.geturl(),
                         )
 
-                media = _parse_facebook_story_page(page)
-                dash_formats = _extract_facebook_story_dash_formats(
+                # First let yt-dlp's FacebookIE parse the same authenticated HTML.
+                # Its native parser understands data-sjs/RelayPrefetchedStreamCache
+                # objects that a flat regex can miss entirely.
+                native_info = _extract_facebook_story_native_info(
+                    page,
+                    url.strip(),
+                )
+                native_formats = list((native_info or {}).get("formats") or [])
+
+                embedded_formats = _extract_facebook_story_dash_formats(
                     page,
                     last_final_url or page_url,
                     manifest_fetcher=fetch_dash_manifest,
                 )
-                media = _apply_facebook_story_dash_formats(page, media, dash_formats)
+                combined_formats: list[dict[str, Any]] = []
+                seen_signatures: set[tuple[str, str]] = set()
+                for fmt in native_formats + embedded_formats:
+                    if not isinstance(fmt, dict):
+                        continue
+                    signature = (
+                        str(fmt.get("format_id") or ""),
+                        str(fmt.get("url") or ""),
+                    )
+                    if not signature[0] or not signature[1] or signature in seen_signatures:
+                        continue
+                    seen_signatures.add(signature)
+                    combined_formats.append(dict(fmt))
+
+                media = _parse_facebook_story_page(page)
+                media = _apply_facebook_story_dash_formats(page, media, combined_formats)
+
+                if media and native_info:
+                    if not media.get("thumbnail") and native_info.get("thumbnail"):
+                        media["thumbnail"] = native_info["thumbnail"]
+                    if (not media.get("title") or media.get("title") == "Facebook Story") and native_info.get("title"):
+                        media["title"] = native_info["title"]
+                    if not media.get("duration") and native_info.get("duration"):
+                        media["duration"] = native_info["duration"]
+                    media["dash_formats"] = combined_formats
                 if media:
                     break
 
