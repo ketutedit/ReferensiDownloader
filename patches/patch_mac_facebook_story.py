@@ -306,15 +306,15 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
     if variants:
         duration = None
         for pattern in (
-            r'"playable_duration_in_ms"\s*:\s*(\d+)',
-            r'"video_duration_in_ms"\s*:\s*(\d+)',
+            r'(?<![\w$])(?:"?playable_duration_in_ms"?|playable_duration_in_ms)\s*[:=]\s*(\d+)',
+            r'(?<![\w$])(?:"?video_duration_in_ms"?|video_duration_in_ms)\s*[:=]\s*(\d+)',
         ):
             match = re.search(pattern, page, re.I)
             if match:
                 duration = max(0, int(int(match.group(1)) / 1000))
                 break
         if duration is None:
-            match = re.search(r'"video_duration"\s*:\s*(\d+(?:\.\d+)?)', page, re.I)
+            match = re.search(r'(?<![\w$])(?:"?video_duration"?|video_duration)\s*[:=]\s*(\d+(?:\.\d+)?)', page, re.I)
             if match:
                 duration = max(0, int(float(match.group(1))))
         best = variants[0]
