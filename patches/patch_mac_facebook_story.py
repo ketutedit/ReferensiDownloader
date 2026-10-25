@@ -852,6 +852,7 @@ def analyze_facebook_story(
                     browser_session = None
 
             media_results: list[dict[str, Any]] = []
+            page_sources: list[str] = []
             last_final_url = ""
             for page_url in page_urls:
                 status_code = 200
@@ -904,6 +905,7 @@ def analyze_facebook_story(
                     )
                     continue
 
+                page_sources.append(page)
                 parsed_media = _parse_facebook_story_page(page)
                 if parsed_media:
                     media_results.append(parsed_media)
@@ -921,6 +923,19 @@ def analyze_facebook_story(
                         "(permintaan halaman ditolak)"
                     )
                     continue
+
+            # HTML parsing can expose only the low-resolution preview. Ask
+            # Facebook's authenticated Story bucket query for the progressive
+            # renditions as a supplemental source before finalizing the menu.
+            graphql_media = _fetch_facebook_story_graphql_media(
+                page_sources,
+                url,
+                jar,
+                browser_session=browser_session,
+                urllib_opener=opener,
+            )
+            if graphql_media:
+                media_results.append(graphql_media)
 
             media = _merge_facebook_story_media_candidates(media_results)
 
