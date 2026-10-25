@@ -680,10 +680,19 @@ def patch_app_download(source_root: Path) -> None:
                 if selected_variant is None and variants:
                     selected_variant = variants[0]
                 if selected_variant and selected_variant.get("url"):
-                    item.direct_url = str(selected_variant["url"])
-                    item.raw["extension"] = str(selected_variant.get("extension") or "mp4")
-                    item.raw["_selected_story_quality"] = str(
+                    # MediaItem is immutable; create a replacement instead of
+                    # assigning to item.direct_url (which raises FrozenInstanceError).
+                    from dataclasses import replace as _replace_media_item
+                    selected_url = str(selected_variant["url"])
+                    selected_raw = dict(item.raw or {})
+                    selected_raw["extension"] = str(
+                        selected_variant.get("extension") or "mp4"
+                    )
+                    selected_raw["_selected_story_quality"] = str(
                         selected_variant.get("label") or "Best Available"
+                    )
+                    item = _replace_media_item(
+                        item, direct_url=selected_url, raw=selected_raw
                     )
 
                 # Time Range and MP3 need yt-dlp/FFmpeg post-processing; use
