@@ -389,7 +389,11 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
             if thumbnail:
                 break
 
-    variants = sorted(variants_by_tier.values(), key=lambda item: item["rank"], reverse=True)
+    variants = sorted(
+        variants_by_tier.values(),
+        key=lambda item: ({"HD": 3, "SD": 2, "Best": 1}.get(item["tier"], 0), item["rank"]),
+        reverse=True,
+    )
     if not variants:
         for key in ("og:video", "og:video:url", "og:video:secure_url"):
             candidate = decode_match(meta.get(key, ""))
