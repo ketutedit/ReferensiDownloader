@@ -34,6 +34,7 @@ def main() -> None:
     video = core._parse_facebook_story_page(video_page)
     assert video is not None, "Video Story fixture was not parsed."
     assert video["media_type"] == "video", video
+    assert video["owner_name"] == "Test Account", video.get("owner_name")
     assert video["direct_url"] == (
         "https://video.xx.fbcdn.net/v/t42.1790-2/story-hd.mp4?oh=hd&oe=def"
     ), video["direct_url"]
@@ -132,6 +133,10 @@ def main() -> None:
         "Stream 1 • 360×640", "Stream 2 • 1080×1920",
     ], merged["variants"]
     assert merged["raw"]["_facebook_story_stream_count"] == 2, merged["raw"]
+    assert core._facebook_story_owner_name(
+        '<html><head><meta property="og:title" content="Bambang Pamungkas | Facebook">'
+        '<title>Bambang Pamungkas\'s Story | Facebook</title></head></html>'
+    ) == "Bambang Pamungkas"
 
     # Regression fixture: the authenticated Story GraphQL response may expose
     # progressive HD/SD renditions that do not appear in the first HTML shell.
@@ -238,14 +243,20 @@ def main() -> None:
     assert "from dataclasses import replace as _replace_media_item" in app_source
     assert "item, direct_url=selected_url, raw=selected_raw" in app_source
 
-    # Download All is a dedicated Facebook Story quality-menu option. It uses
-    # the sentinel -1 and iterates every stream, giving each output a unique name.
+    # Download All appears at the top of the Facebook Story menu and creates
+    # an isolated, sanitized output folder based on the Story owner's display name.
     assert 'QualityOption("Download All", -1)' in core_source
+    assert "qualities.insert(0, QualityOption(\"Download All\", -1))" in core_source
     assert "if requested_height == -1:" in app_source
     assert "for stream_index, variant in enumerate(streams, start=1):" in app_source
     assert 'stream_raw["media_id"] = f"FBStoryStream_{stream_index:03d}"' in app_source
     assert "Download All selesai sebagian" in app_source
     assert 'message or "Download selesai • Siap di-import ke editor"' in app_source
+    assert '"_facebook_story_owner_name": str(media.get("owner_name") or "").strip() or None' in core_source
+    assert 'owner_name = str(item.raw.get("_facebook_story_owner_name") or "").strip()' in app_source
+    assert 'stream_output_dir = _Path(self.output_dir) / folder_name' in app_source
+    assert 'stream_item.direct_url, stream_output_path, None, self.container' in app_source
+    assert 'stream_item, stream_output_path,' in app_source
 
     print("FACEBOOK_STORY_VIDEO_PARSE_TEST=PASS")
     print("FACEBOOK_STORY_QUALITY_VARIANTS_TEST=PASS")
