@@ -52,6 +52,35 @@ def main() -> None:
     assert variants[1]["selector_height"] == 640, variants[1]
     assert variants[1]["label"] == "SD • 360×640", variants[1]
 
+    # Regression fixture: Facebook can expose an SD rendition in a field whose
+    # name suggests HD while the true HD rendition is in playable_url_quality_hd.
+    # The signed URL's efg tag is the strongest resolution signal in this case.
+    quality_tagged_page = r'''
+        <html><head><title>Quality-tagged Story</title></head><body>
+        <script type="application/json">
+        {
+          "width":360,"height":640,
+          "hd_src_no_ratelimit":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-low.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfc2RfcHIifQ%3D%3D\u0026oe=low",
+          "sd_width":360,"sd_height":640,
+          "sd_src_no_ratelimit":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-sd.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfc2RfcHIifQ%3D%3D\u0026oe=sd",
+          "original_width":1080,"original_height":1920,
+          "playable_url_quality_hd":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-real-hd.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfaGRfcHIifQ%3D%3D\u0026oe=hd",
+          "playable_url":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/playable-standard.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfc2RfcHIifQ%3D%3D\u0026oe=standard"
+        }
+        </script></body></html>
+    '''
+    quality_tagged = core._parse_facebook_story_page(quality_tagged_page)
+    assert quality_tagged is not None, "Quality-tagged Story fixture was not parsed."
+    assert quality_tagged["direct_url"].endswith(
+        "story-real-hd.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfaGRfcHIifQ%3D%3D&oe=hd"
+    ), quality_tagged["direct_url"]
+    assert quality_tagged["variants"][0]["tier"] == "HD", quality_tagged["variants"]
+    assert "story-real-hd.mp4" in quality_tagged["variants"][0]["url"], quality_tagged["variants"]
+    assert any(
+        item["tier"] == "SD" and "story-sd.mp4" in item["url"]
+        for item in quality_tagged["variants"]
+    ), quality_tagged["variants"]
+
     photo_page = r'''
         <html><head><title>Story image</title>
         <meta property="og:image" content="https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/story.jpg?x=1&amp;y=2">
