@@ -26,6 +26,7 @@ def main() -> None:
           "sd_width":360,"sd_height":640,
           "sd_src_no_ratelimit":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-sd.mp4?oh=sd\u0026oe=def",
           "playable_url":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/playable-standard.mp4?oh=sd2\u0026oe=def",
+          "facebook_internal_field_x":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-extra.mp4?token=extra"
           "playable_duration_in_ms":16000
         }
         </script></body></html>
@@ -77,12 +78,13 @@ def main() -> None:
     assert quality_tagged is not None, "Quality-tagged Story fixture was not parsed."
     assert "story-low.mp4" in quality_tagged["direct_url"], quality_tagged["direct_url"]
     tagged_urls = [item["url"] for item in quality_tagged["variants"]]
-    assert len(tagged_urls) == 4, tagged_urls
+    assert len(tagged_urls) == 5, tagged_urls
     for expected_name in (
         "story-low.mp4",
         "story-sd.mp4",
         "story-real-hd.mp4",
         "playable-standard.mp4",
+        "story-extra.mp4",
     ):
         assert any(expected_name in candidate for candidate in tagged_urls), tagged_urls
     assert all(item["tier"] == "Stream" for item in quality_tagged["variants"]), quality_tagged["variants"]
