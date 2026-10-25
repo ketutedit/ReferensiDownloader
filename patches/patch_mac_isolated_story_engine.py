@@ -204,10 +204,9 @@ def _gallery_instagram_story_cli_rows(
 
     browser = (cookie_browser or "").strip().lower()
     if browser and browser not in {"auto", "none", "disabled", "off"}:
-        browser_spec = browser
+        browser_spec = browser + "/.instagram.com"
         if cookie_profile:
             browser_spec += ":" + str(cookie_profile)
-        browser_spec += "/.instagram.com"
         # gallery-dl syntax is BROWSER[/DOMAIN][:PROFILE]. Keep the cookie
         # source local; no browser cookie or session is uploaded anywhere.
         args.extend(["--cookies-from-browser", browser_spec])
