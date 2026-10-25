@@ -132,6 +132,85 @@ def main() -> None:
     ], merged["variants"]
     assert merged["raw"]["_facebook_story_stream_count"] == 2, merged["raw"]
 
+    # Regression fixture: the authenticated Story GraphQL response may expose
+    # progressive HD/SD renditions that do not appear in the first HTML shell.
+    story_id = "UzpfSVNDOjEyMzQ1Njc4OTA="
+    graphql_payload = {
+        "data": {
+            "nodes": [{
+                "unified_stories": {
+                    "edges": [{
+                        "node": {
+                            "id": story_id,
+                            "story_card_info": {"story_card_id": story_id},
+                            "attachments": [{
+                                "media": {
+                                    "videoDeliveryResponseFragment": {
+                                        "videoDeliveryResponseResult": {
+                                            "progressive_urls": [
+                                                {
+                                                    "progressive_url": "https://video.xx.fbcdn.net/story-sd.mp4?key=sd",
+                                                    "metadata": {"quality": "SD", "width": 360, "height": 640},
+                                                },
+                                                {
+                                                    "progressive_url": "https://video.xx.fbcdn.net/story-hd.mp4?key=hd",
+                                                    "metadata": {"quality": "HD", "width": 1080, "height": 1920},
+                                                },
+                                                {
+                                                    "progressive_url": "https://video.xx.fbcdn.net/story-hd.mp4?key=hd",
+                                                    "metadata": {"quality": "HD", "width": 1080, "height": 1920},
+                                                },
+                                            ],
+                                        }
+                                    }
+                                }
+                            }],
+                        }
+                    }]
+                }
+            }]
+        }
+    }
+    graphql_media = core._parse_facebook_story_graphql_response(
+        json.dumps(graphql_payload), story_id
+    )
+    assert graphql_media is not None, "Story GraphQL payload was not parsed."
+    assert len(graphql_media["variants"]) == 2, graphql_media["variants"]
+    assert graphql_media["variants"][0]["url"].endswith("story-sd.mp4?key=sd"), graphql_media["variants"]
+    assert graphql_media["variants"][1]["url"].endswith("story-hd.mp4?key=hd"), graphql_media["variants"]
+    assert graphql_media["variants"][1]["width"] == 1080, graphql_media["variants"][1]
+    assert graphql_media["variants"][1]["height"] == 1920, graphql_media["variants"][1]
+
+    # GraphQL requests must stay local and pass tokens from the selected logged-in
+    # session, not log them or hand them to a third-party API.
+    from urllib.parse import parse_qs
+    class FakeCookie:
+        name = "c_user"
+        value = "100200"
+    class FakeResponse:
+        status_code = 200
+        text = json.dumps(graphql_payload)
+        def close(self):
+            pass
+    class FakeSession:
+        def post(self, endpoint, data, headers, timeout, allow_redirects):
+            assert endpoint == "https://www.facebook.com/api/graphql/", endpoint
+            body = parse_qs(data.decode("utf-8"))
+            assert body["__user"] == ["100200"], body
+            assert body["fb_dtsg"] == ["fixture-token"], body
+            assert body["doc_id"] == ["9340191609394579"], body
+            assert "StoriesViewerBucketPrefetcherMultiBucketsQuery" in body["fb_api_req_friendly_name"], body
+            assert json.loads(body["variables"][0])["bucketIDs"] == ["123456"], body
+            return FakeResponse()
+    fetched_graphql = core._fetch_facebook_story_graphql_media(
+        ['"DTSGInitialData",[],{"token":"fixture-token"}'],
+        f"https://www.facebook.com/stories/123456/{story_id}/",
+        [FakeCookie()],
+        browser_session=FakeSession(),
+    )
+    assert fetched_graphql is not None, "Authenticated Story GraphQL fallback did not return media."
+    assert len(fetched_graphql["variants"]) == 2, fetched_graphql["variants"]
+
     photo_page = r'''
         <html><head><title>Story image</title>
         <meta property="og:image" content="https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/story.jpg?x=1&amp;y=2">
