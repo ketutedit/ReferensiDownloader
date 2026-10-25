@@ -175,6 +175,7 @@ def _gallery_instagram_story_cli_rows(
     url: str,
     cookie_browser: str | None = None,
     cookie_profile: str | None = None,
+    cookie_file: str | None = None,
 ) -> list[dict[str, Any]]:
     """Read Story metadata with the separate daily gallery-dl CLI.
 
@@ -185,6 +186,7 @@ def _gallery_instagram_story_cli_rows(
     import json
     import re
     import subprocess
+    from pathlib import Path
 
     binary = _ensure_gallery_dl_story_binary()
     args = [
@@ -202,14 +204,20 @@ def _gallery_instagram_story_cli_rows(
         "-o", "extractor.instagram.include=stories,highlights",
     ]
 
-    browser = (cookie_browser or "").strip().lower()
-    if browser and browser not in {"auto", "none", "disabled", "off"}:
-        browser_spec = browser + "/.instagram.com"
-        if cookie_profile:
-            browser_spec += ":" + str(cookie_profile)
-        # gallery-dl syntax is BROWSER[/DOMAIN][:PROFILE]. Keep the cookie
-        # source local; no browser cookie or session is uploaded anywhere.
-        args.extend(["--cookies-from-browser", browser_spec])
+    if cookie_file:
+        cookie_path = Path(cookie_file).expanduser()
+        if not cookie_path.is_file():
+            raise RuntimeError("File cookies.txt tidak ditemukan. Pilih ulang file cookie lokal.")
+        args.extend(["--cookies", str(cookie_path)])
+    else:
+        browser = (cookie_browser or "").strip().lower()
+        if browser and browser not in {"auto", "none", "disabled", "off"}:
+            browser_spec = browser + "/.instagram.com"
+            if cookie_profile:
+                browser_spec += ":" + str(cookie_profile)
+            # gallery-dl syntax is BROWSER[/DOMAIN][:PROFILE]. Keep the cookie
+            # source local; no browser cookie or session is uploaded anywhere.
+            args.extend(["--cookies-from-browser", browser_spec])
 
     args.extend(["--", url])
     try:
@@ -286,6 +294,7 @@ def main() -> None:
     url: str,
     cookie_browser: str | None = None,
     cookie_profile: str | None = None,
+    cookie_file: str | None = None,
 ) -> list[MediaItem]:
 '''
     if text.count(anchor) != 1:
@@ -303,7 +312,9 @@ def main() -> None:
     rows = list(getattr(task, "data", []) or [])
 '''
     new = '''    if _is_instagram_story_url(url):
-        rows = _gallery_instagram_story_cli_rows(url, cookie_browser, cookie_profile)
+        rows = _gallery_instagram_story_cli_rows(
+            url, cookie_browser, cookie_profile, cookie_file
+        )
         task_error = None
     else:
         task = gdl_job.DataJob(url)
