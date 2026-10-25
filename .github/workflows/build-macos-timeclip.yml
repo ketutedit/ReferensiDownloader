@@ -66,6 +66,7 @@ jobs:
           python "$GITHUB_WORKSPACE/patches/patch_mac_isolated_story_engine.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_mac_facebook_story.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_mac_facebook_post.py" "$SOURCE_ROOT"
+          python "$GITHUB_WORKSPACE/patches/patch_mac_instagram_download_all.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_mac_story_diagnostics.py" "$SOURCE_ROOT"
           python -m py_compile "$SOURCE_ROOT/core.py" "$SOURCE_ROOT/app.py"
 
@@ -112,6 +113,13 @@ jobs:
           set -euo pipefail
           "$SOURCE_ROOT/.buildenv/bin/python" \
             "$GITHUB_WORKSPACE/tests/test_facebook_post_parser.py" "$SOURCE_ROOT"
+
+      - name: Test Instagram Download All folders
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$SOURCE_ROOT/.buildenv/bin/python" \
+            "$GITHUB_WORKSPACE/tests/test_instagram_download_folders.py" "$SOURCE_ROOT"
 
       - name: Test isolated Instagram Story engine
         shell: bash
