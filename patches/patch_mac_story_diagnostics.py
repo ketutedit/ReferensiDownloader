@@ -24,6 +24,10 @@ def main() -> None:
     text = replace_once(
         text,
         '''    def run(self):
+        try: self.done.emit(analyze_url(self.url, self.cookie_browser))
+        except Exception as e: self.error.emit(str(e))
+''',
+        '''    def run(self):
         normalized_url = (self.url or "").strip().lower()
         try:
             if "facebook.com/stories/" in normalized_url:
@@ -64,7 +68,7 @@ def main() -> None:
 
     compile(text, str(app_path), "exec")
     app_path.write_text(text, encoding="utf-8")
-    print("Facebook Story diagnostic patch applied and app.py syntax check passed.")
+    print("Facebook Story and Facebook Post fallback routing applied; app.py syntax check passed.")
 
 
 if __name__ == "__main__":
