@@ -976,6 +976,12 @@ def analyze_facebook_story(
                     label = str(variant.get("label") or "Best Available")
                     qualities.append(QualityOption(label, selector_height))
 
+                # This extra action is limited to Facebook Story videos. Keep
+                # normal per-stream choices unchanged and append a sentinel
+                # option so the worker can download every discovered stream.
+                if media_type == "video" and variants:
+                    qualities.append(QualityOption("Download All", -1))
+
                 raw = dict(media.get("raw") or {})
                 raw.update({
                     "source_url": url,
@@ -1080,6 +1086,89 @@ def patch_app_download(source_root: Path) -> None:
                     requested_height = int(self.height) if self.height is not None else None
                 except (TypeError, ValueError):
                     requested_height = None
+
+                # "Download All" is a Facebook-Story-only sentinel value.
+                # Download each distinct direct stream to a deterministic,
+                # stream-numbered filename. Do not select or infer quality.
+                if requested_height == -1:
+                    from dataclasses import replace as _replace_media_item
+                    streams = [
+                        variant for variant in variants
+                        if isinstance(variant, dict) and str(variant.get("url") or "").strip()
+                    ]
+                    stream_count = len(streams)
+                    if not stream_count:
+                        raise RuntimeError("Facebook Story tidak memiliki stream video untuk diunduh.")
+
+                    completed_streams = 0
+                    failed_streams: list[int] = []
+                    for stream_index, variant in enumerate(streams, start=1):
+                        selected_url = str(variant["url"]).strip()
+                        stream_label = str(variant.get("label") or f"Stream {stream_index}")
+                        stream_raw = dict(item.raw or {})
+                        stream_raw["extension"] = str(variant.get("extension") or "mp4")
+                        stream_raw["_selected_story_quality"] = stream_label
+                        stream_raw["media_id"] = f"FBStoryStream_{stream_index:03d}"
+                        stream_item = _replace_media_item(
+                            item, direct_url=selected_url, raw=stream_raw,
+                            width=variant.get("width") or item.width,
+                            height=variant.get("height") or item.height,
+                        )
+
+                        def stream_hook(
+                            d, _stream_index=stream_index, _stream_label=stream_label,
+                            _stream_item=stream_item,
+                        ):
+                            local_pct, status_text = self._event_to_local(d, _stream_item)
+                            fraction = max(0.0, min(100.0, float(local_pct))) / 100.0
+                            overall_pct = ((_stream_index - 1 + fraction) / stream_count) * 100.0
+                            self.progress.emit(
+                                overall_pct,
+                                f"Stream {_stream_index}/{stream_count} • {_stream_label} • {status_text}",
+                            )
+
+                        try:
+                            if self.time_range is not None or self.audio_only:
+                                download_media(
+                                    stream_item.direct_url, self.output_dir, None, self.container,
+                                    self.audio_only, self.editing_compatible,
+                                    progress_cb=stream_hook, cookie_browser=None,
+                                    time_range=self.time_range,
+                                    filename_prefix=f"Stream {stream_index:03d} - ",
+                                )
+                            else:
+                                download_direct_item(
+                                    stream_item, self.output_dir,
+                                    editing_compatible=self.editing_compatible,
+                                    progress_cb=stream_hook, include_slide_prefix=False,
+                                )
+                            completed_streams += 1
+                        except Exception:
+                            # A stale/invalid signed URL should not prevent the
+                            # remaining stream candidates from being attempted.
+                            failed_streams.append(stream_index)
+                            self.progress.emit(
+                                (stream_index / stream_count) * 100.0,
+                                f"Stream {stream_index}/{stream_count} gagal • {stream_label}",
+                            )
+                            continue
+
+                    if completed_streams == 0:
+                        raise RuntimeError(
+                            f"Download All gagal: 0 dari {stream_count} stream berhasil diunduh."
+                        )
+                    if failed_streams:
+                        self.completion_message = (
+                            f"Download All selesai sebagian • {completed_streams}/{stream_count} stream berhasil "
+                            f"• {len(failed_streams)} gagal"
+                        )
+                    else:
+                        self.completion_message = (
+                            f"Download All selesai • {completed_streams} stream berhasil diunduh"
+                        )
+                    self.progress.emit(100.0, self.completion_message)
+                    continue
+
                 if requested_height is not None:
                     selected_variant = next(
                         (
@@ -1126,9 +1215,23 @@ def patch_app_download(source_root: Path) -> None:
 ''',
         "route Facebook Story direct media to direct downloader",
     )
+    text = replace_once(
+        text,
+        '''    def _download_done(self):
+        self.progress.setValue(100); self.status.setText("Download selesai • Siap di-import ke editor")
+''',
+        '''    def _download_done(self):
+        worker = getattr(self, "_worker", None)
+        message = getattr(worker, "completion_message", None)
+        self.progress.setValue(100)
+        self.status.setText(message or "Download selesai • Siap di-import ke editor")
+''',
+        "show Download All stream completion summary",
+    )
+
     compile(text, str(path), "exec")
     path.write_text(text, encoding="utf-8")
-    print("Facebook Story direct download routing inserted; app.py syntax check passed.")
+    print("Facebook Story Download All routing inserted; app.py syntax check passed.")
 
 
 def main() -> None:
