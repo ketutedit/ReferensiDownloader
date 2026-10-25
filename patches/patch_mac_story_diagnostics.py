@@ -24,23 +24,42 @@ def main() -> None:
     text = replace_once(
         text,
         '''    def run(self):
-        try: self.done.emit(analyze_url(self.url, self.cookie_browser))
-        except Exception as e: self.error.emit(str(e))
-''',
-        '''    def run(self):
+        normalized_url = (self.url or "").strip().lower()
         try:
-            normalized_url = (self.url or "").strip().lower()
             if "facebook.com/stories/" in normalized_url:
-                # Use the local authenticated-session extractor for Facebook
-                # Story URLs. It reads browser cookies only on this computer.
+                # Story extraction is isolated from the normal post/reel path.
                 from core import analyze_facebook_story
                 self.done.emit(analyze_facebook_story(self.url, self.cookie_browser))
                 return
-            self.done.emit(analyze_url(self.url, self.cookie_browser))
+
+            try:
+                self.done.emit(analyze_url(self.url, self.cookie_browser))
+                return
+            except Exception as primary_error:
+                # Only if regular extraction fails, try the local-session
+                # photo parser for Facebook pfbid/share-post URLs. Successful
+                # video/reel and other post paths stay on the original engine.
+                is_facebook_post = (
+                    "facebook.com" in normalized_url
+                    and ("pfbid" in normalized_url or "/share/p/" in normalized_url)
+                )
+                if not is_facebook_post:
+                    raise
+
+                try:
+                    from core import analyze_facebook_post
+                    self.done.emit(analyze_facebook_post(self.url, self.cookie_browser))
+                    return
+                except Exception as fallback_error:
+                    raise RuntimeError(
+                        str(primary_error)
+                        + "\\n\\nFacebook Post photo fallback: "
+                        + str(fallback_error)
+                    ) from fallback_error
         except Exception as e:
             self.error.emit(str(e))
 ''',
-        "route Facebook Story to the authenticated page extractor",
+        "route Facebook Story and pfbid photo fallback",
     )
 
     compile(text, str(app_path), "exec")
