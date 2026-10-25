@@ -227,7 +227,7 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
     candidate_by_url: dict[str, dict[str, Any]] = {}
     for field, declared_tier, rank in field_specs:
         pattern = re.compile(
-            r'"' + re.escape(field) + r'\s*:\s*"((?:\\.|[^"\\])*)"',
+            r'"' + re.escape(field) + r'"\s*:\s*"((?:\\.|[^"\\])*)"',
             re.I,
         )
         for match in pattern.finditer(page):
