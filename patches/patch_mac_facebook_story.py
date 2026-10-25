@@ -375,6 +375,83 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
     return None
 
 
+def _merge_facebook_story_media_candidates(
+    media_candidates: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Merge media discovered from several Facebook page frontends.
+
+    Facebook can return different media payloads for www, m, and mbasic
+    frontends. A successful low-resolution parse from one host must not stop
+    extraction from the other hosts.
+    """
+    usable = [
+        media for media in media_candidates
+        if isinstance(media, dict) and media.get("media_type") in {"video", "photo"}
+    ]
+    videos = [media for media in usable if media.get("media_type") == "video"]
+    if not videos:
+        return dict(usable[0]) if usable else None
+
+    # Keep the first video payload for stable title/thumbnail metadata, but
+    # pool all distinct direct streams discovered on every page frontend.
+    merged = dict(videos[0])
+    variants: list[dict[str, Any]] = []
+    variant_by_url: dict[str, dict[str, Any]] = {}
+    for media in videos:
+        media_variants = list(media.get("variants") or [])
+        if not media_variants and media.get("direct_url"):
+            media_variants = [{
+                "url": str(media["direct_url"]),
+                "tier": "Stream",
+                "rank": 0,
+                "label": "Stream",
+                "width": media.get("width"),
+                "height": media.get("height"),
+                "selector_height": int(media.get("height") or 1280),
+                "extension": str(media.get("extension") or "mp4"),
+            }]
+        for variant in media_variants:
+            stream_url = str(variant.get("url") or "").strip()
+            if not stream_url:
+                continue
+            prior = variant_by_url.get(stream_url)
+            if prior is not None:
+                # If the same URL appeared with richer dimension metadata on
+                # another frontend, retain the metadata rather than duplicate it.
+                for dim in ("width", "height"):
+                    if not prior.get(dim) and variant.get(dim):
+                        prior[dim] = variant[dim]
+                continue
+            copied = dict(variant)
+            copied["url"] = stream_url
+            variant_by_url[stream_url] = copied
+            variants.append(copied)
+
+    if variants:
+        for index, variant in enumerate(variants, start=1):
+            variant["tier"] = "Stream"
+            variant["rank"] = len(variants) - index + 1
+            width, height = variant.get("width"), variant.get("height")
+            variant["label"] = (
+                f"Stream {index} • {width}×{height}"
+                if width and height else f"Stream {index}"
+            )
+            # Assign an initial unique key even when several frontends report
+            # the same resolution. The caller also normalizes these for UI use.
+            variant["selector_height"] = 10000 + index
+            variant["extension"] = str(variant.get("extension") or "mp4")
+
+        merged["variants"] = variants
+        merged["direct_url"] = variants[0]["url"]
+        merged["width"] = variants[0].get("width")
+        merged["height"] = variants[0].get("height")
+        merged["raw"] = dict(merged.get("raw") or {})
+        merged["raw"]["_facebook_story_direct"] = True
+        merged["raw"]["_facebook_story_stream_count"] = len(variants)
+
+    return merged
+
+
 def analyze_facebook_story(
     url: str, cookie_browser: str | None = "auto",
 ) -> MediaInfo:
@@ -485,7 +562,7 @@ def analyze_facebook_story(
                     )
                     browser_session = None
 
-            media = None
+            media_results: list[dict[str, Any]] = []
             last_final_url = ""
             for page_url in page_urls:
                 status_code = 200
@@ -538,9 +615,13 @@ def analyze_facebook_story(
                     )
                     continue
 
-                media = _parse_facebook_story_page(page)
-                if media:
-                    break
+                parsed_media = _parse_facebook_story_page(page)
+                if parsed_media:
+                    media_results.append(parsed_media)
+                    # Keep scanning all frontends; one low-resolution result
+                    # is not proof that the other page variants have no better
+                    # stream metadata.
+                    continue
 
                 if status_code >= 400:
                     # Do not dump response bodies; some contain account-related
@@ -551,6 +632,8 @@ def analyze_facebook_story(
                         "(permintaan halaman ditolak)"
                     )
                     continue
+
+            media = _merge_facebook_story_media_candidates(media_results)
 
             if browser_session is not None:
                 try:
