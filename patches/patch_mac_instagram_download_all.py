@@ -78,8 +78,8 @@ def _instagram_download_all_folder(
         folder_parts.append(identifier)
 
     folder_name = " - ".join(folder_parts)
-    folder_name = re.sub(r'[<>:"/\\\\|?*\\x00-\\x1f]+', "_", folder_name)
-    folder_name = re.sub(r"\\s+", " ", folder_name).strip(" ._")[:120]
+    folder_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", folder_name)
+    folder_name = re.sub(r"\s+", " ", folder_name).strip(" ._")[:120]
     if not folder_name or folder_name in {".", ".."}:
         folder_name = kind
 
