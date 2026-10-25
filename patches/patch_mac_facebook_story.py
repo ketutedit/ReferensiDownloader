@@ -291,7 +291,7 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
 
     variants = sorted(
         variants_by_tier.values(),
-        key=lambda item: ({"HD": 3, "SD": 2, "Best": 1}.get(item["tier"], 0), item["rank"]),
+        key=lambda item: item["rank"],
         reverse=True,
     )
     if not variants:
