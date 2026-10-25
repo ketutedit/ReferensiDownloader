@@ -176,7 +176,7 @@ def _gallery_instagram_story_cli_rows(
     cookie_browser: str | None = None,
     cookie_profile: str | None = None,
     cookie_file: str | None = None,
-) -> list[dict[str, Any]]:
+) -> list[tuple[Any, ...]]:
     """Read Story metadata with the separate daily gallery-dl CLI.
 
     The CLI emits the same per-media metadata objects as gallery-dl's DataJob.
@@ -235,22 +235,55 @@ def _gallery_instagram_story_cli_rows(
     except Exception as exc:
         raise RuntimeError(f"Instagram Story gagal menjalankan gallery-dl: {type(exc).__name__}: {exc}") from exc
 
-    rows: list[dict[str, Any]] = []
-    for line in (completed.stdout or "").splitlines():
-        line = line.strip()
-        if not line:
-            continue
+    # gallery-dl --dump-json emits the whole DataJob result list as a single
+    # pretty-printed JSON array by default. Its elements are message tuples:
+    # [3, url, metadata], [2, metadata], [6, url, metadata], or [-1, error].
+    # Parsing each output line as a standalone object silently discarded
+    # every media row and displayed a random JSON tail as the UI error.
+    rows: list[tuple[Any, ...]] = []
+    stdout = (completed.stdout or "").strip()
+    decoded = None
+    if stdout:
         try:
-            value = json.loads(line)
+            decoded = json.loads(stdout)
         except Exception:
-            continue
-        if isinstance(value, dict) and value.get("url"):
-            rows.append(value)
+            # Tolerate JSONL output as a fallback.
+            decoded_rows = []
+            for line in stdout.splitlines():
+                try:
+                    decoded_rows.append(json.loads(line))
+                except Exception:
+                    continue
+            decoded = decoded_rows
 
-    if rows:
+    if isinstance(decoded, list):
+        for value in decoded:
+            if isinstance(value, (list, tuple)) and value:
+                # Convert JSON arrays into tuples, matching gallery_dl.job.DataJob.data.
+                rows.append(tuple(value))
+            elif isinstance(value, dict) and value.get("url"):
+                rows.append((3, str(value["url"]), value))
+    elif isinstance(decoded, dict) and decoded.get("url"):
+        rows.append((3, str(decoded["url"]), decoded))
+
+    # Preserve the DataJob protocol so the existing MediaItem mapper handles
+    # directory metadata, queued extractors, and direct media URLs consistently.
+    if rows and not any(row and row[0] == -1 for row in rows):
         return rows
 
-    detail = (completed.stderr or completed.stdout or "").strip()
+    error_rows = [
+        row[-1] for row in rows
+        if row and row[0] == -1 and isinstance(row[-1], dict)
+    ]
+    if error_rows:
+        error = error_rows[0]
+        err_name = str(error.get("error") or "AbortExtraction")
+        err_message = str(error.get("message") or "Story extractor gagal.")
+        # Do not expose signed CDN URLs or session/query tokens.
+        err_message = re.sub(r"https?://\S+", "[URL]", err_message)
+        raise RuntimeError(f"gallery-dl Instagram Story: {err_name}: {err_message[:500]}")
+
+    detail = (completed.stderr or stdout).strip()
     # Avoid showing signed CDN URLs/query tokens in a GUI error dialog.
     detail = re.sub(r"https?://\S+", "[URL]", detail)
     detail = detail[-700:]
@@ -260,7 +293,7 @@ def _gallery_instagram_story_cli_rows(
             f"(kode {completed.returncode}). {detail or 'Tidak ada detail dari extractor.'}"
         )
     raise RuntimeError(
-        "gallery-dl tidak menemukan media Instagram Story yang dapat diunduh. "
+        "gallery-dl tidak mengembalikan pesan media Instagram Story yang valid. "
         f"{detail or 'Pastikan akun dapat melihat Story tersebut dan sesi login masih aktif.'}"
     )
 
