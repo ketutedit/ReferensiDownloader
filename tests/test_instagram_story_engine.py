@@ -49,7 +49,7 @@ def main() -> None:
             return_value=CompletedProcess(
                 args=["gallery-dl"],
                 returncode=0,
-                stdout=json.dumps(row) + "\n",
+                stdout=json.dumps([[3, row["url"], row]], indent=2),
                 stderr="",
             ),
         ) as run:
@@ -58,7 +58,7 @@ def main() -> None:
                 cookie_browser="chrome",
             )
 
-    assert rows == [row], rows
+    assert rows == [(3, row["url"], row)], rows
     command = run.call_args.args[0]
     assert command[0] == "/tmp/gallery-dl-story", command
     assert "--dump-json" in command
@@ -93,6 +93,33 @@ def main() -> None:
             else:
                 raise AssertionError("Story CLI failures should be returned as a clear error.")
 
+    # DataJob failures are encoded as a tuple in stdout with exit code 0.
+    # They should preserve the actual authentication reason instead of being
+    # mistaken for a successful extraction with no media.
+    auth_failure = [[-1, {
+        "error": "AbortExtraction",
+        "message": "Failed to load API data ('Unauthorized logged out query.')",
+    }]]
+    with patch.object(core, "_ensure_gallery_dl_story_binary", return_value="/tmp/gallery-dl-story"):
+        with patch(
+            "subprocess.run",
+            return_value=CompletedProcess(
+                args=["gallery-dl"],
+                returncode=0,
+                stdout=json.dumps(auth_failure, indent=2),
+                stderr="",
+            ),
+        ):
+            try:
+                core._gallery_instagram_story_cli_rows(
+                    "https://www.instagram.com/stories/example/",
+                    cookie_browser="brave",
+                )
+            except RuntimeError as exc:
+                assert "Unauthorized logged out query" in str(exc), str(exc)
+            else:
+                raise AssertionError("DataJob authentication errors must be surfaced.")
+
     # Verify the patched extractor selects the standalone engine only for
     # Story/Highlight URLs and retains the embedded DataJob path for everything else.
     source = (root / "core.py").read_text(encoding="utf-8")
@@ -108,6 +135,7 @@ def main() -> None:
 
     print("INSTAGRAM_STORY_ENGINE_ROUTE_ISOLATION_TEST=PASS")
     print("INSTAGRAM_STORY_ENGINE_JSON_METADATA_TEST=PASS")
+    print("INSTAGRAM_STORY_ENGINE_AUTH_ERROR_TEST=PASS")
     print("INSTAGRAM_STORY_ENGINE_LOCAL_COOKIE_ARGS_TEST=PASS")
     print("INSTAGRAM_STORY_ENGINE_ERROR_REDACTION_TEST=PASS")
     print("INSTAGRAM_NON_STORY_ENGINE_PIN_PRESERVED_TEST=PASS")
