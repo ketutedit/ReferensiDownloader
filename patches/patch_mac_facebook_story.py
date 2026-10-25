@@ -173,51 +173,171 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
         ("playable_url", "Best", 60),
         ("video_url", "Best", 55),
     )
-    variants_by_tier: dict[str, dict[str, Any]] = {}
-    seen_urls: set[str] = set()
-    for field, tier, rank in field_specs:
-        if tier == "Best":
-            # playable_url usually represents the standard stream when HD is
-            # known, but becomes the only available option if no tier exists.
-            if "HD" in variants_by_tier and "SD" not in variants_by_tier and field == "playable_url":
-                tier = "SD"
-            elif variants_by_tier:
+
+    def url_quality_hint(candidate: str) -> str | None:
+        """Read Facebook's encoded rendition tag when present in a signed CDN URL."""
+        import base64
+        import json
+        from urllib.parse import parse_qs
+
+        try:
+            query = parse_qs(urlparse(candidate).query)
+        except Exception:
+            return None
+
+        signals: list[str] = []
+        for key, values in query.items():
+            if key.lower() not in {
+                "efg", "quality", "video_quality", "quality_label", "venc_tag"
+            }:
                 continue
-        if tier in variants_by_tier:
-            continue
+            for value in values:
+                signals.append(str(value))
+                # Meta often base64-encodes JSON like
+                # {"vencode_tag":"dash_hd_pr"} in the efg query parameter.
+                compact = str(value).strip()
+                if not compact:
+                    continue
+                try:
+                    padded = compact + ("=" * ((4 - len(compact) % 4) % 4))
+                    decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+                    decoded_text = decoded.decode("utf-8", errors="ignore")
+                    signals.append(decoded_text)
+                    try:
+                        parsed = json.loads(decoded_text)
+                        signals.append(json.dumps(parsed, ensure_ascii=False))
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+        signal_text = " ".join(signals).lower()
+        if re.search(r"dash[_-]?hd(?:[_-]|$)|hd[_-]pr|high[_ -]?quality", signal_text):
+            return "HD"
+        if re.search(r"dash[_-]?sd(?:[_-]|$)|sd[_-]pr|low[_ -]?quality", signal_text):
+            return "SD"
+        return None
+
+    # Do not stop at the first key with an HD-like name. Facebook sometimes
+    # places an SD-tagged rendition in hd_src_no_ratelimit while exposing the
+    # actual HD stream in playable_url_quality_hd. Inspect every known field,
+    # then rank URLs within each tier using the signed URL's own quality
+    # tag, real dimensions when available, and finally the field priority.
+    candidates: list[dict[str, Any]] = []
+    candidate_by_url: dict[str, dict[str, Any]] = {}
+    for field, declared_tier, rank in field_specs:
         pattern = re.compile(
-            r'"' + re.escape(field) + r'"\s*:\s*"((?:\\.|[^"\\])*)"',
+            r'"' + re.escape(field) + r'\s*:\s*"((?:\\.|[^"\\])*)"',
             re.I,
         )
         for match in pattern.finditer(page):
             candidate = decode_match(match.group(1))
-            if not valid_media_url(candidate, "video") or candidate in seen_urls:
+            if not valid_media_url(candidate, "video"):
                 continue
+
+            hint = url_quality_hint(candidate)
+            tier = hint or declared_tier
             width, height = dimensions_near(match.start(), tier)
-            fallback_key = 1280 if tier in {"HD", "Best"} else 640
-            selector_height = height if height else fallback_key
-            if any(v["selector_height"] == selector_height for v in variants_by_tier.values()):
-                selector_height = fallback_key
+            row = {
+                "url": candidate,
+                "tier": tier,
+                "declared_tier": declared_tier,
+                "url_hint": hint,
+                "field": field,
+                "rank": rank,
+                "width": width,
+                "height": height,
+            }
+            existing = candidate_by_url.get(candidate)
+            if existing is not None:
+                existing["rank"] = max(int(existing["rank"]), rank)
+                if hint and not existing.get("url_hint"):
+                    existing["url_hint"] = hint
+                    existing["tier"] = hint
+                existing_pixels = int(existing.get("width") or 0) * int(existing.get("height") or 0)
+                new_pixels = int(width or 0) * int(height or 0)
+                if new_pixels > existing_pixels:
+                    existing["width"], existing["height"] = width, height
+                continue
+            candidate_by_url[candidate] = row
+            candidates.append(row)
+
+    if not candidates:
+        variants_by_tier: dict[str, dict[str, Any]] = {}
+    else:
+        has_hd = any(item["tier"] == "HD" for item in candidates)
+        has_sd = any(item["tier"] == "SD" for item in candidates)
+
+        # playable_url is normally the SD companion of an HD stream. Use it
+        # only when no explicit SD URL was found; don't let generic video_url
+        # override a known rendition.
+        if has_hd and not has_sd:
+            fallback_sd = [
+                item for item in candidates
+                if item["field"] == "playable_url"
+                and item["declared_tier"] == "Best"
+                and item["url_hint"] is None
+            ]
+            if fallback_sd:
+                fallback_sd[0]["tier"] = "SD"
+                has_sd = True
+
+        if has_hd or has_sd:
+            candidates = [item for item in candidates if item["tier"] in {"HD", "SD"}]
+        else:
+            # No explicit or tagged tier exists: preserve the old best-available
+            # fallback, choosing playable_url before the generic video_url.
+            candidates = [max(candidates, key=lambda item: int(item["rank"]))]
+
+        def candidate_score(item: dict[str, Any]) -> tuple[int, int, int, int]:
+            width = int(item.get("width") or 0)
+            height = int(item.get("height") or 0)
+            return (
+                1 if item.get("url_hint") == item.get("tier") else 0,
+                width * height,
+                max(width, height),
+                int(item.get("rank") or 0),
+            )
+
+        variants_by_tier = {}
+        used_selector_heights: set[int] = set()
+        for tier in ("HD", "SD", "Best"):
+            tier_candidates = [item for item in candidates if item["tier"] == tier]
+            if not tier_candidates:
+                continue
+            best = max(tier_candidates, key=candidate_score)
+            width, height = best.get("width"), best.get("height")
+            fallback_height = 640 if tier == "SD" else 1280
+            selector_height = int(height or fallback_height)
+            if selector_height in used_selector_heights:
+                selector_height = fallback_height
+                while selector_height in used_selector_heights:
+                    selector_height += 1
+            used_selector_heights.add(selector_height)
+
             if width and height:
-                label = f"{tier} • {width}×{height}" if tier != "Best" else f"Best Available • {width}×{height}"
+                label = (
+                    f"{tier} • {width}×{height}"
+                    if tier != "Best"
+                    else f"Best Available • {width}×{height}"
+                )
             elif tier == "HD":
                 label = "HD • Highest available"
             elif tier == "SD":
                 label = "SD • Standard"
             else:
                 label = "Best Available"
+
             variants_by_tier[tier] = {
-                "url": candidate,
+                "url": best["url"],
                 "tier": tier,
-                "rank": rank,
+                "rank": int(best["rank"]),
                 "label": label,
                 "width": width,
                 "height": height,
-                "selector_height": int(selector_height),
+                "selector_height": selector_height,
                 "extension": "mp4",
             }
-            seen_urls.add(candidate)
-            break
 
     # Some templates wrap the playable URL in an object rather than storing a
     # string directly.
