@@ -42,19 +42,23 @@ def main() -> None:
     ), video["thumbnail"]
     assert video["raw"]["_facebook_story_direct"] is True
     variants = video["variants"]
-    assert len(variants) == 2, variants
-    assert variants[0]["tier"] == "HD", variants
-    assert variants[0]["width"] == 720 and variants[0]["height"] == 1280, variants[0]
-    assert variants[0]["selector_height"] == 1280, variants[0]
-    assert variants[0]["label"] == "HD • 720×1280", variants[0]
-    assert variants[1]["tier"] == "SD", variants
-    assert variants[1]["width"] == 360 and variants[1]["height"] == 640, variants[1]
-    assert variants[1]["selector_height"] == 640, variants[1]
-    assert variants[1]["label"] == "SD • 360×640", variants[1]
+    expected_streams = {
+        "story-hd.mp4?oh=hd&oe=def",
+        "story-sd.mp4?oh=sd&oe=def",
+        "playable-standard.mp4?oh=sd2&oe=def",
+    }
+    assert len(variants) == 3, variants
+    assert all(item["tier"] == "Stream" for item in variants), variants
+    assert all(item["label"].startswith("Stream ") for item in variants), variants
+    assert all(item["selector_height"] for item in variants), variants
+    assert len({item["selector_height"] for item in variants}) == len(variants), variants
+    assert expected_streams == {
+        next((suffix for suffix in expected_streams if item["url"].endswith(suffix)), "")
+        for item in variants
+    }, variants
 
-    # Regression fixture: Facebook can expose an SD rendition in a field whose
-    # name suggests HD while the true HD rendition is in playable_url_quality_hd.
-    # The signed URL's efg tag is the strongest resolution signal in this case.
+    # Regression fixture: do not infer a stream's quality from its field name.
+    # All distinct direct stream URLs should remain selectable, regardless of tag.
     quality_tagged_page = r'''
         <html><head><title>Quality-tagged Story</title></head><body>
         <script type="application/json">
@@ -71,16 +75,18 @@ def main() -> None:
     '''
     quality_tagged = core._parse_facebook_story_page(quality_tagged_page)
     assert quality_tagged is not None, "Quality-tagged Story fixture was not parsed."
-    assert quality_tagged["direct_url"].endswith(
-        "story-real-hd.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfaGRfcHIifQ%3D%3D&oe=hd"
-    ), quality_tagged["direct_url"]
-    assert quality_tagged["variants"][0]["tier"] == "HD", quality_tagged["variants"]
-    assert "story-real-hd.mp4" in quality_tagged["variants"][0]["url"], quality_tagged["variants"]
-    assert any(
-        item["tier"] == "SD"
-        and ("story-low.mp4" in item["url"] or "story-sd.mp4" in item["url"])
-        for item in quality_tagged["variants"]
-    ), quality_tagged["variants"]
+    assert "story-low.mp4" in quality_tagged["direct_url"], quality_tagged["direct_url"]
+    tagged_urls = [item["url"] for item in quality_tagged["variants"]]
+    assert len(tagged_urls) == 4, tagged_urls
+    for expected_name in (
+        "story-low.mp4",
+        "story-sd.mp4",
+        "story-real-hd.mp4",
+        "playable-standard.mp4",
+    ):
+        assert any(expected_name in candidate for candidate in tagged_urls), tagged_urls
+    assert all(item["tier"] == "Stream" for item in quality_tagged["variants"]), quality_tagged["variants"]
+    assert len(set(tagged_urls)) == len(tagged_urls), tagged_urls
 
     photo_page = r'''
         <html><head><title>Story image</title>
