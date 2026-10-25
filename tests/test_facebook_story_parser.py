@@ -70,6 +70,13 @@ def main() -> None:
     """
     assert core._parse_facebook_story_page(login_page) is None
 
+    # Regression guard: the download path must replace immutable MediaItem
+    # instances instead of assigning directly to a frozen field.
+    app_source = (root / "app.py").read_text(encoding="utf-8")
+    assert 'item.direct_url = str(selected_variant["url"])' not in app_source
+    assert "from dataclasses import replace as _replace_media_item" in app_source
+    assert "item, direct_url=selected_url, raw=selected_raw" in app_source
+
     print("FACEBOOK_STORY_VIDEO_PARSE_TEST=PASS")
     print("FACEBOOK_STORY_QUALITY_VARIANTS_TEST=PASS")
     print("FACEBOOK_STORY_THUMBNAIL_TEST=PASS")
