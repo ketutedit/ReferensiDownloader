@@ -207,6 +207,21 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
         for match in pattern.finditer(page):
             add_video_candidate(match.group(1), field, match.start(), declared_tier)
 
+    # Also scan all quoted strings for direct progressive MP4/M4V URLs, even
+    # when Facebook changes the JSON field name. This deliberately excludes
+    # HLS/DASH manifests and non-video CDN assets; those require a separate
+    # audio/video-aware path and should not be mislabeled as standalone MP4s.
+    for match in re.finditer(r'"((?:\\.|[^"\\])*)"', page):
+        raw_value = match.group(1)
+        candidate = decode_match(raw_value)
+        try:
+            candidate_path = urlparse(candidate).path.lower()
+        except Exception:
+            continue
+        if not candidate_path.endswith((".mp4", ".m4v")):
+            continue
+        add_video_candidate(raw_value, "generic_mp4_url", match.start(), "Best")
+
     # Some templates wrap playable_url in an object rather than a string.
     # Check these even if direct string fields were already found.
     nested_pattern = re.compile(
@@ -493,7 +508,13 @@ def analyze_facebook_story(
     # Keep the full Story path/query intact but try each normal public host.
     original_host = parsed.netloc.lower().split(":", 1)[0]
     page_urls = [url.strip()]
-    for host in ("www.facebook.com", "m.facebook.com", "mbasic.facebook.com"):
+    for host in (
+        "www.facebook.com",
+        "m.facebook.com",
+        "mbasic.facebook.com",
+        "web.facebook.com",
+        "touch.facebook.com",
+    ):
         if host == original_host:
             continue
         candidate = urllib.parse.urlunparse(parsed._replace(netloc=host))
