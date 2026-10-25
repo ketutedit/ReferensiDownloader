@@ -2,7 +2,9 @@ name: Build macOS Isolated Story Engines Test
 
 on:
   push:
-    branches: [feature-timeclip-mac]
+    branches:
+      - feature-timeclip-mac
+      - feature/isolated-story-engines
   workflow_dispatch:
 
 permissions:
