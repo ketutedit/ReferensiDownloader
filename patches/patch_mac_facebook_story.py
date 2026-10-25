@@ -70,6 +70,70 @@ def _facebook_story_meta_tags(page: str) -> dict[str, str]:
     return result
 
 
+def _facebook_story_owner_name(page: str) -> str | None:
+    """Best-effort display name for the owner of the Facebook Story."""
+    import html
+    import re
+
+    meta = _facebook_story_meta_tags(page)
+    candidates = [
+        meta.get("og:title", ""),
+        meta.get("twitter:title", ""),
+        meta.get("title", ""),
+    ]
+    title_match = re.search(r"<title[^>]*>(.*?)</title\s*>", page or "", re.I | re.S)
+    if title_match:
+        candidates.append(title_match.group(1))
+
+    # Facebook's serialized Story data can contain the author independently
+    # of the page title. Limit matches to Story owner/actor objects instead of
+    # taking the first generic "name" on the entire page.
+    owner_patterns = (
+        r'"story_bucket_owner"\s*:\s*\{.{0,1200}?"name"\s*:\s*"((?:\\.|[^"\\])*)"',
+        r'"story_owner"\s*:\s*\{.{0,1200}?"name"\s*:\s*"((?:\\.|[^"\\])*)"',
+        r'"owner"\s*:\s*\{.{0,1200}?"name"\s*:\s*"((?:\\.|[^"\\])*)"',
+        r'"actors"\s*:\s*\[\s*\{.{0,800}?"name"\s*:\s*"((?:\\.|[^"\\])*)"',
+        r'"profile_name"\s*:\s*"((?:\\.|[^"\\])*)"',
+    )
+    for pattern in owner_patterns:
+        match = re.search(pattern, page or "", re.I | re.S)
+        if match:
+            candidates.append(match.group(1))
+
+    for value in candidates:
+        name = html.unescape(str(value or "")).strip()
+        if not name:
+            continue
+        name = re.sub(r"\s+", " ", name)
+        # Remove a site suffix before interpreting the actual profile title.
+        name = re.sub(r"\s*[|•–—-]\s*Facebook(?:\s*-\s*log in or sign up)?\s*$", "", name, flags=re.I)
+        name = re.sub(r"\s*-\s*Facebook\s*$", "", name, flags=re.I)
+        name = re.sub(r"\s*\|\s*Facebook\s*$", "", name, flags=re.I).strip()
+
+        patterns = (
+            r"^Story\s+by\s+(.+?)\s*$",
+            r"^(.+?)['’]s\s+(?:Facebook\s+)?Stories?\s*$",
+            r"^(.+?)\s+(?:shared|added)\s+(?:a\s+)?(?:new\s+)?Story\s*$",
+            r"^(.+?)\s+on\s+Facebook\s*$",
+        )
+        for pattern in patterns:
+            match = re.match(pattern, name, re.I)
+            if match:
+                name = match.group(1).strip()
+                break
+
+        name = re.sub(r"^(?:Facebook\s+)?Stories?(?:\s+Viewer)?$", "", name, flags=re.I).strip()
+        if name.lower() in {
+            "", "facebook", "log in to facebook", "login", "watch", "story",
+            "facebook stories", "stories", "your story",
+        }:
+            continue
+        if len(name) > 100:
+            continue
+        return name
+    return None
+
+
 def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
     """Extract available SD/HD Story video URLs and a preview image from page source."""
     import html
@@ -85,6 +149,7 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
     title = re.sub(r"\s+", " ", html.unescape(title_match.group(1))).strip() if title_match else ""
     if title.lower() in {"facebook", "log in to facebook", "login"}:
         title = ""
+    owner_name = _facebook_story_owner_name(page)
 
     def decode_match(raw: str) -> str:
         url = _decode_facebook_json_string(raw)
@@ -346,6 +411,7 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
             "extension": "mp4",
             "thumbnail": thumbnail or None,
             "title": title or "Facebook Story",
+            "owner_name": owner_name,
             "duration": duration,
             "variants": variants,
             "width": best.get("width"),
@@ -381,6 +447,7 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
             "extension": extension,
             "thumbnail": image_url,
             "title": title or "Facebook Story",
+            "owner_name": owner_name,
             "duration": None,
             "variants": [],
             "width": None,
@@ -475,6 +542,26 @@ def _parse_facebook_story_graphql_response(
 
     variants: list[dict[str, Any]] = []
     seen: set[str] = set()
+    owner_name: str | None = None
+    for story_node in story_nodes:
+        # Story owner names appear under different shapes across GraphQL revisions.
+        for owner_key in ("story_bucket_owner", "story_owner", "owner", "actors", "story_card_info"):
+            owner_value = story_node.get(owner_key)
+            if isinstance(owner_value, list):
+                owner_value = next((entry for entry in owner_value if isinstance(entry, dict)), None)
+            if isinstance(owner_value, dict):
+                candidate_name = str(
+                    owner_value.get("name")
+                    or owner_value.get("display_name")
+                    or owner_value.get("profile_name")
+                    or ""
+                ).strip()
+                if candidate_name and candidate_name.lower() not in {"facebook", "stories"}:
+                    owner_name = candidate_name
+                    break
+        if owner_name:
+            break
+
     for story_node in story_nodes:
         for attachment in story_node.get("attachments") or []:
             if not isinstance(attachment, dict):
@@ -531,6 +618,7 @@ def _parse_facebook_story_graphql_response(
         "extension": "mp4",
         "thumbnail": None,
         "title": "Facebook Story",
+        "owner_name": owner_name,
         "duration": None,
         "variants": variants,
         "width": variants[0].get("width"),
@@ -678,6 +766,14 @@ def _merge_facebook_story_media_candidates(
     # Keep the first video payload for stable title/thumbnail metadata, but
     # pool all distinct direct streams discovered on every page frontend.
     merged = dict(videos[0])
+    merged["owner_name"] = next(
+        (
+            str(media.get("owner_name")).strip()
+            for media in usable
+            if str(media.get("owner_name") or "").strip()
+        ),
+        None,
+    )
     variants: list[dict[str, Any]] = []
     variant_by_url: dict[str, dict[str, Any]] = {}
     for media in videos:
@@ -980,7 +1076,7 @@ def analyze_facebook_story(
                 # normal per-stream choices unchanged and append a sentinel
                 # option so the worker can download every discovered stream.
                 if media_type == "video" and variants:
-                    qualities.append(QualityOption("Download All", -1))
+                    qualities.insert(0, QualityOption("Download All", -1))
 
                 raw = dict(media.get("raw") or {})
                 raw.update({
@@ -988,6 +1084,7 @@ def analyze_facebook_story(
                     "extension": extension,
                     "_facebook_story_direct": True,
                     "_facebook_story_variants": variants,
+                    "_facebook_story_owner_name": str(media.get("owner_name") or "").strip() or None,
                 })
                 best_variant = variants[0] if variants else {}
                 selected_url = str(best_variant.get("url") or media["direct_url"])
