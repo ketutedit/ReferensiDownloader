@@ -1197,6 +1197,35 @@ def patch_app_download(source_root: Path) -> None:
                     if not stream_count:
                         raise RuntimeError("Facebook Story tidak memiliki stream video untuk diunduh.")
 
+                    # Download All writes into a folder named after the Facebook
+                    # Story owner. If Facebook does not expose a usable display
+                    # name, use the bucket/profile ID from the Story URL so separate
+                    # people do not all write into a generic folder.
+                    import re as _re
+                    from pathlib import Path as _Path
+                    from urllib.parse import urlparse as _urlparse
+
+                    owner_name = str(item.raw.get("_facebook_story_owner_name") or "").strip()
+                    if not owner_name:
+                        try:
+                            path_parts = [
+                                part for part in _urlparse(str(item.raw.get("source_url") or "")).path.split("/")
+                                if part
+                            ]
+                            story_pos = path_parts.index("stories")
+                            fallback_id = path_parts[story_pos + 1] if len(path_parts) > story_pos + 1 else ""
+                        except Exception:
+                            fallback_id = ""
+                        owner_name = f"Facebook Story {fallback_id}".strip() if fallback_id else "Facebook Story"
+
+                    folder_name = _re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", owner_name)
+                    folder_name = _re.sub(r"\s+", " ", folder_name).strip(" ._")[:90]
+                    if not folder_name or folder_name in {".", ".."}:
+                        folder_name = "Facebook Story"
+                    stream_output_dir = _Path(self.output_dir) / folder_name
+                    stream_output_dir.mkdir(parents=True, exist_ok=True)
+                    stream_output_path = str(stream_output_dir)
+
                     completed_streams = 0
                     failed_streams: list[int] = []
                     for stream_index, variant in enumerate(streams, start=1):
@@ -1227,7 +1256,7 @@ def patch_app_download(source_root: Path) -> None:
                         try:
                             if self.time_range is not None or self.audio_only:
                                 download_media(
-                                    stream_item.direct_url, self.output_dir, None, self.container,
+                                    stream_item.direct_url, stream_output_path, None, self.container,
                                     self.audio_only, self.editing_compatible,
                                     progress_cb=stream_hook, cookie_browser=None,
                                     time_range=self.time_range,
@@ -1235,7 +1264,7 @@ def patch_app_download(source_root: Path) -> None:
                                 )
                             else:
                                 download_direct_item(
-                                    stream_item, self.output_dir,
+                                    stream_item, stream_output_path,
                                     editing_compatible=self.editing_compatible,
                                     progress_cb=stream_hook, include_slide_prefix=False,
                                 )
