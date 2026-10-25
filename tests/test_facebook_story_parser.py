@@ -88,6 +88,48 @@ def main() -> None:
     assert all(item["tier"] == "Stream" for item in quality_tagged["variants"]), quality_tagged["variants"]
     assert len(set(tagged_urls)) == len(tagged_urls), tagged_urls
 
+    # When alternate Facebook frontends expose different payloads, merge every
+    # unique URL instead of returning as soon as the first frontend has media.
+    page_one = {
+        "media_type": "video",
+        "direct_url": "https://video.xx.fbcdn.net/story-low.mp4",
+        "title": "Facebook Story",
+        "variants": [{
+            "url": "https://video.xx.fbcdn.net/story-low.mp4",
+            "tier": "Stream", "rank": 1, "label": "Stream 1",
+            "width": 360, "height": 640, "selector_height": 640, "extension": "mp4",
+        }],
+    }
+    page_two = {
+        "media_type": "video",
+        "direct_url": "https://video.xx.fbcdn.net/story-hd.mp4",
+        "title": "Facebook Story",
+        "variants": [
+            {
+                "url": "https://video.xx.fbcdn.net/story-low.mp4",
+                "tier": "Stream", "rank": 2, "label": "Stream 1",
+                "width": 360, "height": 640, "selector_height": 640, "extension": "mp4",
+            },
+            {
+                "url": "https://video.xx.fbcdn.net/story-hd.mp4",
+                "tier": "Stream", "rank": 1, "label": "Stream 2",
+                "width": 1080, "height": 1920, "selector_height": 1280, "extension": "mp4",
+            },
+        ],
+    }
+    merged = core._merge_facebook_story_media_candidates([page_one, page_two])
+    assert merged is not None and merged["media_type"] == "video", merged
+    assert merged["direct_url"] == "https://video.xx.fbcdn.net/story-low.mp4", merged
+    merged_urls = [item["url"] for item in merged["variants"]]
+    assert merged_urls == [
+        "https://video.xx.fbcdn.net/story-low.mp4",
+        "https://video.xx.fbcdn.net/story-hd.mp4",
+    ], merged_urls
+    assert [item["label"] for item in merged["variants"]] == [
+        "Stream 1 • 360×640", "Stream 2 • 1080×1920",
+    ], merged["variants"]
+    assert merged["raw"]["_facebook_story_stream_count"] == 2, merged["raw"]
+
     photo_page = r'''
         <html><head><title>Story image</title>
         <meta property="og:image" content="https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/story.jpg?x=1&amp;y=2">
