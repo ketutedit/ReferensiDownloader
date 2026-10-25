@@ -26,7 +26,6 @@ def main() -> None:
           "sd_width":360,"sd_height":640,
           "sd_src_no_ratelimit":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-sd.mp4?oh=sd\u0026oe=def",
           "playable_url":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/playable-standard.mp4?oh=sd2\u0026oe=def",
-          "facebook_internal_field_x":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-extra.mp4?token=extra"
           "playable_duration_in_ms":16000
         }
         </script></body></html>
@@ -70,7 +69,8 @@ def main() -> None:
           "sd_src_no_ratelimit":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-sd.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfc2RfcHIifQ%3D%3D\u0026oe=sd",
           "original_width":1080,"original_height":1920,
           "playable_url_quality_hd":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-real-hd.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfaGRfcHIifQ%3D%3D\u0026oe=hd",
-          "playable_url":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/playable-standard.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfc2RfcHIifQ%3D%3D\u0026oe=standard"
+          "playable_url":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/playable-standard.mp4?efg=eyJ2ZW5jb2RlX3RhZyI6ImRhc2hfc2RfcHIifQ%3D%3D\u0026oe=standard",
+          "facebook_internal_field_x":"https:\/\/video.xx.fbcdn.net\/v\/t42.1790-2\/story-extra.mp4?token=extra"
         }
         </script></body></html>
     '''
