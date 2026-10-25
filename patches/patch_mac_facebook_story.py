@@ -390,6 +390,274 @@ def _parse_facebook_story_page(page: str) -> dict[str, Any] | None:
     return None
 
 
+def _parse_facebook_story_graphql_response(
+    response_text: str, story_id: str,
+) -> dict[str, Any] | None:
+    """Extract progressive video renditions from Facebook's Story GraphQL payload."""
+    import base64
+    import json
+    import re
+    from urllib.parse import urlparse
+
+    if not response_text or not story_id:
+        return None
+
+    def normalize_id(value: Any) -> str:
+        return str(value or "").strip()
+
+    def id_matches(story_node: dict[str, Any]) -> bool:
+        target = normalize_id(story_id)
+        info = story_node.get("story_card_info") or {}
+        possible = [
+            normalize_id(story_node.get("id")),
+            normalize_id(info.get("story_card_id")),
+            normalize_id(story_node.get("story_id")),
+            normalize_id(story_node.get("legacy_story_id")),
+        ]
+        if any(candidate and (candidate == target or target in candidate) for candidate in possible):
+            return True
+        for candidate in possible:
+            if not candidate:
+                continue
+            try:
+                decoded = base64.b64decode(candidate + "=" * ((4 - len(candidate) % 4) % 4)).decode(
+                    "utf-8", errors="ignore"
+                )
+                if target in decoded:
+                    return True
+            except Exception:
+                pass
+        try:
+            decoded_target = base64.b64decode(target + "=" * ((4 - len(target) % 4) % 4)).decode(
+                "utf-8", errors="ignore"
+            )
+            return any(candidate and candidate in decoded_target for candidate in possible)
+        except Exception:
+            return False
+
+    documents: list[Any] = []
+    for line in response_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("for (;;);"):
+            line = line[len("for (;;);"):].strip()
+        try:
+            documents.append(json.loads(line))
+        except Exception:
+            continue
+    if not documents:
+        try:
+            documents.append(json.loads(response_text.strip().removeprefix("for (;;);")))
+        except Exception:
+            return None
+
+    story_nodes: list[dict[str, Any]] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            stories = value.get("unified_stories")
+            if isinstance(stories, dict):
+                edges = stories.get("edges")
+                if isinstance(edges, list):
+                    for edge in edges:
+                        node = edge.get("node") if isinstance(edge, dict) else None
+                        if isinstance(node, dict) and id_matches(node):
+                            story_nodes.append(node)
+            for nested in value.values():
+                walk(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                walk(nested)
+
+    for document in documents:
+        walk(document)
+
+    variants: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for story_node in story_nodes:
+        for attachment in story_node.get("attachments") or []:
+            if not isinstance(attachment, dict):
+                continue
+            media = attachment.get("media") or {}
+            delivery = (
+                media.get("videoDeliveryResponseFragment") or {}
+            ).get("videoDeliveryResponseResult") or {}
+            progressive = delivery.get("progressive_urls") or []
+            for row in progressive:
+                if not isinstance(row, dict):
+                    continue
+                direct_url = str(row.get("progressive_url") or row.get("url") or "").strip()
+                if not direct_url or direct_url in seen:
+                    continue
+                try:
+                    parsed = urlparse(direct_url)
+                except Exception:
+                    continue
+                host = (parsed.hostname or "").lower()
+                if (
+                    parsed.scheme not in {"http", "https"}
+                    or not host.endswith(("fbcdn.net", "fbsbx.com"))
+                    or not parsed.path.lower().endswith((".mp4", ".m4v"))
+                ):
+                    continue
+                metadata = row.get("metadata") or {}
+                width = metadata.get("width") or row.get("width")
+                height = metadata.get("height") or row.get("height")
+                if not width or not height:
+                    resolution = str(metadata.get("resolution") or "")
+                    size_match = re.match(r"(\d{2,5})\s*[x×]\s*(\d{2,5})", resolution, re.I)
+                    if size_match:
+                        width, height = int(size_match.group(1)), int(size_match.group(2))
+                seen.add(direct_url)
+                variants.append({
+                    "url": direct_url,
+                    "tier": "Stream",
+                    "rank": 0,
+                    "label": "GraphQL Stream",
+                    "width": int(width) if width else None,
+                    "height": int(height) if height else None,
+                    "selector_height": int(height or 1280),
+                    "extension": "mp4",
+                    "source_field": "graphql.progressive_urls",
+                })
+
+    if not variants:
+        return None
+
+    return {
+        "direct_url": variants[0]["url"],
+        "media_type": "video",
+        "extension": "mp4",
+        "thumbnail": None,
+        "title": "Facebook Story",
+        "duration": None,
+        "variants": variants,
+        "width": variants[0].get("width"),
+        "height": variants[0].get("height"),
+        "raw": {"_facebook_story_direct": True, "_facebook_story_graphql": True},
+    }
+
+
+def _fetch_facebook_story_graphql_media(
+    response_texts: list[str],
+    url: str,
+    cookie_jar: Any,
+    browser_session: Any = None,
+    urllib_opener: Any = None,
+) -> dict[str, Any] | None:
+    """Ask Facebook's logged-in Story bucket query for progressive renditions.
+
+    Cookies and the request token stay local to the app. This helper is a
+    supplemental extraction method; HTML parsing remains the fallback.
+    """
+    import re
+    import urllib.parse
+    import urllib.request
+    from html import unescape
+
+    try:
+        parsed = urllib.parse.urlparse(url.strip())
+        path_parts = [urllib.parse.unquote(part) for part in parsed.path.split("/") if part]
+        if "stories" not in path_parts:
+            return None
+        index = path_parts.index("stories")
+        if len(path_parts) <= index + 2:
+            return None
+        bucket_id = path_parts[index + 1]
+        story_id = path_parts[index + 2]
+        if not bucket_id or not story_id:
+            return None
+
+        user_id = next(
+            (str(cookie.value) for cookie in cookie_jar if cookie.name == "c_user"),
+            "",
+        )
+        if not user_id:
+            return None
+
+        token = ""
+        token_patterns = (
+            r'name=["\']fb_dtsg["\'][^>]*value=["\']([^"\']+)',
+            r'"DTSGInitialData",\[\],\{"token":"([^"]+)"',
+            r'"fb_dtsg"\s*:\s*"([^"]+)"',
+            r'"token"\s*:\s*"([^"]+)"',
+        )
+        for page in response_texts:
+            for pattern in token_patterns:
+                match = re.search(pattern, page, re.I)
+                if match:
+                    token = unescape(match.group(1))
+                    if token:
+                        break
+            if token:
+                break
+        if not token:
+            return None
+
+        variables = {
+            "bucketIDs": [bucket_id],
+            "scale": 2,
+            "blur": 10,
+            "shouldEnableArmadilloStoryReply": True,
+            "shouldEnableLiveInStories": True,
+            "feedbackSource": 65,
+            "useDefaultActor": False,
+            "feedLocation": "COMET_MEDIA_VIEWER",
+            "focusCommentID": None,
+            "shouldDeferLoad": False,
+            "isStoriesArchive": False,
+            "__relay_internal__pv__IsWorkUserrelayprovider": False,
+        }
+        body = urllib.parse.urlencode({
+            "av": user_id,
+            "__aaid": "0",
+            "__user": user_id,
+            "__a": "1",
+            "__req": "t",
+            "fb_dtsg": token,
+            "fb_api_caller_class": "RelayModern",
+            "fb_api_req_friendly_name": "StoriesViewerBucketPrefetcherMultiBucketsQuery",
+            "variables": __import__("json").dumps(variables, separators=(",", ":")),
+            "server_timestamps": "true",
+            "doc_id": "9340191609394579",
+        }).encode("utf-8")
+        headers = {
+            "Accept": "*/*",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": "https://www.facebook.com",
+            "Referer": url,
+            "X-Fb-Friendly-Name": "StoriesViewerBucketPrefetcherMultiBucketsQuery",
+        }
+
+        response_text = ""
+        endpoint = "https://www.facebook.com/api/graphql/"
+        if browser_session is not None:
+            response = browser_session.post(
+                endpoint, data=body, headers=headers, timeout=25, allow_redirects=True
+            )
+            status = int(response.status_code)
+            response_text = str(response.text or "")
+            try:
+                response.close()
+            except Exception:
+                pass
+            if status < 200 or status >= 300:
+                return None
+        elif urllib_opener is not None:
+            request = urllib.request.Request(endpoint, data=body, headers=headers, method="POST")
+            with urllib_opener.open(request, timeout=25) as response:
+                response_text = response.read(20 * 1024 * 1024).decode("utf-8", errors="replace")
+        else:
+            return None
+
+        return _parse_facebook_story_graphql_response(response_text, story_id)
+    except Exception:
+        # The query is an optional fallback. Do not replace a successful HTML
+        # parse with an opaque error, and never log request tokens or cookies.
+        return None
+
+
 def _merge_facebook_story_media_candidates(
     media_candidates: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
