@@ -80,6 +80,11 @@ def main() -> None:
     assert "from core import analyze_facebook_post" in app_source
     assert "except Exception as primary_error:" in app_source
     assert '"pfbid" in normalized_url or "/share/p/" in normalized_url' in app_source
+    # Download All for Facebook Post photos should route to a post-specific
+    # folder, while the folder logic is limited to multi-item batches.
+    assert 'if item.raw.get("_facebook_post_direct") and self.post_total_items > 1:' in app_source
+    assert 'folder_parts = ["Facebook Post", owner_name]' in app_source
+    assert 'photo_output_path = _Path(self.output_dir) / folder_name' in app_source
 
     print("FACEBOOK_POST_SINGLE_PHOTO_TEST=PASS")
     print("FACEBOOK_POST_MULTI_PHOTO_TEST=PASS")
