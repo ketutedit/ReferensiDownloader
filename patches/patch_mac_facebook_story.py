@@ -1156,8 +1156,47 @@ def patch_app_download(source_root: Path) -> None:
     text = replace_once(
         text,
         '''            if item.media_type == "photo":
+                photo_output_dir = self.output_dir
+                if item.raw.get("_facebook_post_direct") and self.post_total_items > 1:
+                    # Download All for a multi-photo Facebook post gets its own
+                    # uniquely named folder instead of mixing with other files.
+                    import re as _re
+                    from pathlib import Path as _Path
+                    from urllib.parse import urlparse as _urlparse
+
+                    source_url = str(item.raw.get("source_url") or "")
+                    owner_name = str(item.uploader or "").strip() or "Facebook"
+                    post_match = _re.search(r"pfbid[A-Za-z0-9]+", source_url, _re.I)
+                    if post_match:
+                        post_identifier = post_match.group(0)
+                    else:
+                        url_parts = [
+                            part for part in _urlparse(source_url).path.split("/") if part
+                        ]
+                        share_pos = next(
+                            (index for index, part in enumerate(url_parts) if part.lower() == "p"),
+                            -1,
+                        )
+                        post_identifier = (
+                            url_parts[share_pos + 1]
+                            if share_pos >= 0 and len(url_parts) > share_pos + 1
+                            else ""
+                        )
+
+                    folder_parts = ["Facebook Post", owner_name]
+                    if post_identifier:
+                        folder_parts.append(post_identifier)
+                    folder_name = " - ".join(folder_parts)
+                    folder_name = _re.sub(r'[<>:"/\\\\|?*\\x00-\\x1f]+', "_", folder_name)
+                    folder_name = _re.sub(r"\\s+", " ", folder_name).strip(" ._")[:120]
+                    if not folder_name or folder_name in {".", ".."}:
+                        folder_name = "Facebook Post"
+                    photo_output_path = _Path(self.output_dir) / folder_name
+                    photo_output_path.mkdir(parents=True, exist_ok=True)
+                    photo_output_dir = str(photo_output_path)
+
                 download_direct_item(
-                    item, self.output_dir, editing_compatible=False,
+                    item, photo_output_dir, editing_compatible=False,
                     progress_cb=hook, include_slide_prefix=self.post_total_items > 1,
                 )
                 continue
