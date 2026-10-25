@@ -1166,7 +1166,7 @@ def patch_app_download(source_root: Path) -> None:
 ''',
         '''            if item.media_type == "photo":
                 photo_output_dir = self.output_dir
-                if item.raw.get("_facebook_post_direct") and self.post_total_items > 1:
+                if item.raw.get("_facebook_post_direct"):
                     # Download All for a multi-photo Facebook post gets its own
                     # uniquely named folder instead of mixing with other files.
                     import re as _re
