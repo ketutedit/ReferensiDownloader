@@ -1218,8 +1218,8 @@ def patch_app_download(source_root: Path) -> None:
                             fallback_id = ""
                         owner_name = f"Facebook Story {fallback_id}".strip() if fallback_id else "Facebook Story"
 
-                    folder_name = _re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", owner_name)
-                    folder_name = _re.sub(r"\s+", " ", folder_name).strip(" ._")[:90]
+                    folder_name = _re.sub(r'[<>:"/\\|?*\\x00-\\x1f]+', "_", owner_name)
+                    folder_name = _re.sub(r"\\s+", " ", folder_name).strip(" ._")[:90]
                     if not folder_name or folder_name in {".", ".."}:
                         folder_name = "Facebook Story"
                     stream_output_dir = _Path(self.output_dir) / folder_name
