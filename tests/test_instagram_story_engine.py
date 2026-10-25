@@ -97,7 +97,8 @@ def main() -> None:
     # Story/Highlight URLs and retains the embedded DataJob path for everything else.
     source = (root / "core.py").read_text(encoding="utf-8")
     assert "if _is_instagram_story_url(url):" in source
-    assert "rows = _gallery_instagram_story_cli_rows(url, cookie_browser, cookie_profile)" in source
+    assert "rows = _gallery_instagram_story_cli_rows(" in source
+    assert "url, cookie_browser, cookie_profile, cookie_file" in source
     assert "task = gdl_job.DataJob(url)" in source
 
     # This package remains deliberately pinned for existing post/reel/carousel
