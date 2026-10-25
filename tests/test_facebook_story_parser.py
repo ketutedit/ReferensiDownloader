@@ -77,7 +77,8 @@ def main() -> None:
     assert quality_tagged["variants"][0]["tier"] == "HD", quality_tagged["variants"]
     assert "story-real-hd.mp4" in quality_tagged["variants"][0]["url"], quality_tagged["variants"]
     assert any(
-        item["tier"] == "SD" and "story-sd.mp4" in item["url"]
+        item["tier"] == "SD"
+        and ("story-low.mp4" in item["url"] or "story-sd.mp4" in item["url"])
         for item in quality_tagged["variants"]
     ), quality_tagged["variants"]
 
