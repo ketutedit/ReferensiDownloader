@@ -1156,6 +1156,15 @@ def patch_app_download(source_root: Path) -> None:
     text = replace_once(
         text,
         '''            if item.media_type == "photo":
+                download_direct_item(
+                    item, self.output_dir, editing_compatible=False,
+                    progress_cb=hook, include_slide_prefix=self.post_total_items > 1,
+                )
+                continue
+
+            # For an All Items download every video uses Best Available. For a
+''',
+        '''            if item.media_type == "photo":
                 photo_output_dir = self.output_dir
                 if item.raw.get("_facebook_post_direct") and self.post_total_items > 1:
                     # Download All for a multi-photo Facebook post gets its own
@@ -1197,15 +1206,6 @@ def patch_app_download(source_root: Path) -> None:
 
                 download_direct_item(
                     item, photo_output_dir, editing_compatible=False,
-                    progress_cb=hook, include_slide_prefix=self.post_total_items > 1,
-                )
-                continue
-
-            # For an All Items download every video uses Best Available. For a
-''',
-        '''            if item.media_type == "photo":
-                download_direct_item(
-                    item, self.output_dir, editing_compatible=False,
                     progress_cb=hook, include_slide_prefix=self.post_total_items > 1,
                 )
                 continue
