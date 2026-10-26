@@ -137,7 +137,7 @@ def main() -> None:
     assert core._parse_facebook_post_page(bad_host_page) is None
 
     app_source = (root / "app.py").read_text(encoding="utf-8")
-    assert "self.done.emit(_analyze_url_with_facebook_post_fallback(self.url, self.cookie_browser))" in app_source
+    assert "self.done.emit(analyze_url(self.url, self.cookie_browser))" in app_source
     assert "from core import analyze_facebook_post" in app_source
     assert "except Exception as primary_error:" in app_source
     assert '"pfbid" in normalized_url or "/share/p/" in normalized_url' in app_source

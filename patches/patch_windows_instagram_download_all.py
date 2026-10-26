@@ -95,95 +95,55 @@ def patch_app(source_root: Path) -> None:
     path = source_root / "app.py"
     text = path.read_text(encoding="utf-8")
 
-    # Windows does not carry the macOS-only Time Range patch, so its app.py
-    # may not define _parse_timecode. Insert this helper before the first
-    # top-level class instead; that keeps it module-scoped on both platforms.
-    import re
-    if "_instagram_download_all_folder(" not in text:
-        class_match = re.search(r"(?m)^class\s+[A-Za-z_]\w*\s*(?:\([^\n]*\))?:", text)
-        if not class_match:
-            raise RuntimeError("Could not find a top-level application class for the Instagram helper.")
-        position = class_match.start()
-        text = text[:position] + INSTAGRAM_DOWNLOAD_FOLDER_HELPER + text[position:]
+    text = replace_once(
+        text,
+        "def _parse_timecode(value: str) -> float:\n",
+        INSTAGRAM_DOWNLOAD_FOLDER_HELPER + "def _parse_timecode(value: str) -> float:\n",
+        "insert Instagram Download All destination helper",
+    )
 
-    mac_call = '''            post_total_items=self.media.total_items,
+    text = replace_once(
+        text,
+        '''            post_total_items=self.media.total_items,
             time_range=time_range,
         )
-'''
-    windows_call = '''            post_total_items=self.media.total_items,
-        )
-'''
-    if mac_call in text:
-        text = replace_once(
-            text, mac_call,
-            '''            post_total_items=self.media.total_items,
+''',
+        '''            post_total_items=self.media.total_items,
             time_range=time_range,
             download_all=all_items,
         )
 ''',
-            "pass explicit Download All state",
-        )
-    else:
-        text = replace_once(
-            text, windows_call,
-            '''            post_total_items=self.media.total_items,
-            download_all=all_items,
-        )
-''',
-            "pass explicit Download All state on Windows",
-        )
+        "pass explicit Download All state",
+    )
 
-    mac_signature = '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
+    text = replace_once(
+        text,
+        '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
         time_range=None,
     ):
-'''
-    windows_signature = '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
-    ):
-'''
-    if mac_signature in text:
-        text = replace_once(
-            text, mac_signature,
-            '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
+''',
+        '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
         time_range=None, download_all=False,
     ):
 ''',
-            "accept explicit Download All state",
-        )
-    else:
-        text = replace_once(
-            text, windows_signature,
-            '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
-        download_all=False,
-    ):
-''',
-            "accept explicit Download All state on Windows",
-        )
+        "accept explicit Download All state",
+    )
 
-    mac_init = '''        self.post_total_items = max(1, int(post_total_items or 1))
+    text = replace_once(
+        text,
+        '''        self.post_total_items = max(1, int(post_total_items or 1))
         self.time_range = time_range
-'''
-    windows_init = '''        self.post_total_items = max(1, int(post_total_items or 1))
-'''
-    folder_setup = '''        self.download_all = bool(download_all)
+''',
+        '''        self.post_total_items = max(1, int(post_total_items or 1))
+        self.time_range = time_range
+        self.download_all = bool(download_all)
         if self.download_all:
             self.output_dir = _instagram_download_all_folder(
                 url, output_dir, media_items, self.post_total_items
             )
-'''
-    if mac_init in text:
-        text = replace_once(
-            text, mac_init,
-            '''        self.post_total_items = max(1, int(post_total_items or 1))
-        self.time_range = time_range
-''' + folder_setup,
-            "route Instagram Download All into a dedicated folder",
-        )
-    else:
-        text = replace_once(
-            text, windows_init,
-            windows_init + folder_setup,
-            "route Windows Instagram Download All into a dedicated folder",
-        )
+''',
+        "route Instagram Download All into a dedicated folder",
+    )
 
     compile(text, str(path), "exec")
     path.write_text(text, encoding="utf-8")

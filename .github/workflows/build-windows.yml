@@ -59,6 +59,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Instagram compatibility patch failed." }
           python "$env:GITHUB_WORKSPACE\patches\patch_windows_cookiefile.py" "$env:SOURCE_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "cookies.txt fallback patch failed." }
+          python "$env:GITHUB_WORKSPACE\patches\patch_windows_time_range.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Time Range segment patch failed." }
           python "$env:GITHUB_WORKSPACE\patches\patch_windows_facebook_story.py" "$env:SOURCE_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "Facebook Story patch failed." }
           python "$env:GITHUB_WORKSPACE\patches\patch_windows_facebook_post.py" "$env:SOURCE_ROOT"
@@ -86,6 +88,12 @@ jobs:
           $testPython = (Get-Command python).Source
           if (-not $testPython) { throw "Python 3.12 was not found for regression tests." }
           "TEST_PYTHON=$testPython" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Test Windows Time Range Download only this Segment
+        shell: pwsh
+        run: |
+          & "$env:TEST_PYTHON" "$env:GITHUB_WORKSPACE\tests\test_windows_time_range.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Time Range regression test failed." }
 
       - name: Test Facebook Story media parsing
         shell: pwsh

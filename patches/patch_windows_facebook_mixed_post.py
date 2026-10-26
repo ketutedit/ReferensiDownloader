@@ -539,13 +539,32 @@ def patch_app(source_root: Path) -> None:
                 video_raw = dict(item.raw or {})
                 video_raw["extension"] = "mp4"
                 item = _replace_media_item(item, raw=video_raw)
-                download_direct_item(
-                    item,
-                    str(video_output_path),
-                    editing_compatible=self.editing_compatible,
-                    progress_cb=hook,
-                    include_slide_prefix=self.post_total_items > 1,
-                )
+                if self.time_range is not None:
+                    # The direct CDN URL is a video source; route through yt-dlp's
+                    # section downloader so a selected Start-End segment is honored.
+                    download_media(
+                        item.direct_url,
+                        str(video_output_path),
+                        None,
+                        self.container,
+                        self.audio_only,
+                        self.editing_compatible,
+                        progress_cb=hook,
+                        cookie_browser=None,
+                        time_range=self.time_range,
+                        filename_prefix=(
+                            f"Slide {item.slide_index:03d} - "
+                            if self.post_total_items > 1 else ""
+                        ),
+                    )
+                else:
+                    download_direct_item(
+                        item,
+                        str(video_output_path),
+                        editing_compatible=self.editing_compatible,
+                        progress_cb=hook,
+                        include_slide_prefix=self.post_total_items > 1,
+                    )
                 continue
 
             # Facebook Story analysis already has a direct CDN URL. Avoid
