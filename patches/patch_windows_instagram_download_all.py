@@ -95,12 +95,16 @@ def patch_app(source_root: Path) -> None:
     path = source_root / "app.py"
     text = path.read_text(encoding="utf-8")
 
-    text = replace_once(
-        text,
-        "def _parse_timecode(value: str) -> float:\n",
-        INSTAGRAM_DOWNLOAD_FOLDER_HELPER + "def _parse_timecode(value: str) -> float:\n",
-        "insert Instagram Download All destination helper",
-    )
+    # Windows does not carry the macOS-only Time Range patch, so its app.py
+    # may not define _parse_timecode. Insert this helper before the first
+    # top-level class instead; that keeps it module-scoped on both platforms.
+    import re
+    if "_instagram_download_all_folder(" not in text:
+        class_match = re.search(r"(?m)^class\\s+[A-Za-z_]\\w*\\s*(?:\\([^\\n]*\\))?:", text)
+        if not class_match:
+            raise RuntimeError("Could not find a top-level application class for the Instagram helper.")
+        position = class_match.start()
+        text = text[:position] + INSTAGRAM_DOWNLOAD_FOLDER_HELPER + text[position:]
 
     text = replace_once(
         text,
