@@ -106,48 +106,84 @@ def patch_app(source_root: Path) -> None:
         position = class_match.start()
         text = text[:position] + INSTAGRAM_DOWNLOAD_FOLDER_HELPER + text[position:]
 
-    text = replace_once(
-        text,
-        '''            post_total_items=self.media.total_items,
+    mac_call = '''            post_total_items=self.media.total_items,
             time_range=time_range,
         )
-''',
-        '''            post_total_items=self.media.total_items,
+'''
+    windows_call = '''            post_total_items=self.media.total_items,
+        )
+'''
+    if mac_call in text:
+        text = replace_once(
+            text, mac_call,
+            '''            post_total_items=self.media.total_items,
             time_range=time_range,
             download_all=all_items,
         )
 ''',
-        "pass explicit Download All state",
-    )
+            "pass explicit Download All state",
+        )
+    else:
+        text = replace_once(
+            text, windows_call,
+            '''            post_total_items=self.media.total_items,
+            download_all=all_items,
+        )
+''',
+            "pass explicit Download All state on Windows",
+        )
 
-    text = replace_once(
-        text,
-        '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
+    mac_signature = '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
         time_range=None,
     ):
-''',
-        '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
+'''
+    windows_signature = '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
+    ):
+'''
+    if mac_signature in text:
+        text = replace_once(
+            text, mac_signature,
+            '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
         time_range=None, download_all=False,
     ):
 ''',
-        "accept explicit Download All state",
-    )
-
-    text = replace_once(
-        text,
-        '''        self.post_total_items = max(1, int(post_total_items or 1))
-        self.time_range = time_range
+            "accept explicit Download All state",
+        )
+    else:
+        text = replace_once(
+            text, windows_signature,
+            '''        cookie_browser, playlist_index=None, media_items=None, post_total_items=1,
+        download_all=False,
+    ):
 ''',
-        '''        self.post_total_items = max(1, int(post_total_items or 1))
+            "accept explicit Download All state on Windows",
+        )
+
+    mac_init = '''        self.post_total_items = max(1, int(post_total_items or 1))
         self.time_range = time_range
-        self.download_all = bool(download_all)
+'''
+    windows_init = '''        self.post_total_items = max(1, int(post_total_items or 1))
+'''
+    folder_setup = '''        self.download_all = bool(download_all)
         if self.download_all:
             self.output_dir = _instagram_download_all_folder(
                 url, output_dir, media_items, self.post_total_items
             )
-''',
-        "route Instagram Download All into a dedicated folder",
-    )
+'''
+    if mac_init in text:
+        text = replace_once(
+            text, mac_init,
+            '''        self.post_total_items = max(1, int(post_total_items or 1))
+        self.time_range = time_range
+''' + folder_setup,
+            "route Instagram Download All into a dedicated folder",
+        )
+    else:
+        text = replace_once(
+            text, windows_init,
+            windows_init + folder_setup,
+            "route Windows Instagram Download All into a dedicated folder",
+        )
 
     compile(text, str(path), "exec")
     path.write_text(text, encoding="utf-8")
