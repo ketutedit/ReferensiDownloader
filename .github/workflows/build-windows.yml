@@ -81,13 +81,10 @@ jobs:
           Copy-Item ".\dist\ReferensiDownloader-Windows-x64-Portable.zip" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Portable.zip") -Force
           Copy-Item ".\dist\installer\ReferensiDownloader-Windows-x64-Setup.exe" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Setup.exe") -Force
           Get-ChildItem $artifactDir | Format-Table Name,Length
-          $pythonCandidates = @(
-            (Join-Path $env:SOURCE_ROOT ".buildenv\Scripts\python.exe"),
-            (Join-Path $env:SOURCE_ROOT ".venv\Scripts\python.exe"),
-            (Join-Path $env:SOURCE_ROOT "venv\Scripts\python.exe")
-          )
-          $testPython = $pythonCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $testPython) { throw "Could not find the build Python environment for regression tests." }
+          # build_windows.ps1 installs its dependencies into the Python 3.12
+          # interpreter provided by setup-python; reuse that interpreter for tests.
+          $testPython = (Get-Command python).Source
+          if (-not $testPython) { throw "Python 3.12 was not found for regression tests." }
           "TEST_PYTHON=$testPython" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Test Facebook Story media parsing
