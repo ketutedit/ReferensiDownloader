@@ -59,6 +59,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Instagram compatibility patch failed." }
           python "$env:GITHUB_WORKSPACE\patches\patch_windows_cookiefile.py" "$env:SOURCE_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "cookies.txt fallback patch failed." }
+          python "$env:GITHUB_WORKSPACE\patches\patch_windows_facebook_story.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Facebook Story patch failed." }
+          python "$env:GITHUB_WORKSPACE\patches\patch_windows_facebook_post.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Facebook Post fallback patch failed." }
+          python "$env:GITHUB_WORKSPACE\patches\patch_windows_facebook_mixed_post.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Facebook mixed photo/video patch failed." }
+          python "$env:GITHUB_WORKSPACE\patches\patch_windows_instagram_download_all.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Instagram Download All folder patch failed." }
           python -m py_compile "$env:SOURCE_ROOT\core.py" "$env:SOURCE_ROOT\app.py"
           if ($LASTEXITCODE -ne 0) { throw "Python syntax check failed." }
 
@@ -73,6 +81,32 @@ jobs:
           Copy-Item ".\dist\ReferensiDownloader-Windows-x64-Portable.zip" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Portable.zip") -Force
           Copy-Item ".\dist\installer\ReferensiDownloader-Windows-x64-Setup.exe" (Join-Path $artifactDir "ReferensiDownloader-Windows-x64-Setup.exe") -Force
           Get-ChildItem $artifactDir | Format-Table Name,Length
+          $pythonCandidates = @(
+            (Join-Path $env:SOURCE_ROOT ".buildenv\Scripts\python.exe"),
+            (Join-Path $env:SOURCE_ROOT ".venv\Scripts\python.exe"),
+            (Join-Path $env:SOURCE_ROOT "venv\Scripts\python.exe")
+          )
+          $testPython = $pythonCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $testPython) { throw "Could not find the build Python environment for regression tests." }
+          "TEST_PYTHON=$testPython" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Test Facebook Story media parsing
+        shell: pwsh
+        run: |
+          & "$env:TEST_PYTHON" "$env:GITHUB_WORKSPACE\tests\test_facebook_story_parser.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Facebook Story parser regression test failed." }
+
+      - name: Test Facebook Post photo/video fallback
+        shell: pwsh
+        run: |
+          & "$env:TEST_PYTHON" "$env:GITHUB_WORKSPACE\tests\test_facebook_post_parser.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Facebook Post parser regression test failed." }
+
+      - name: Test Instagram Download All folders
+        shell: pwsh
+        run: |
+          & "$env:TEST_PYTHON" "$env:GITHUB_WORKSPACE\tests\test_instagram_download_folders.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Instagram Download All regression test failed." }
 
       - name: Upload Windows build artifact
         uses: actions/upload-artifact@v4
