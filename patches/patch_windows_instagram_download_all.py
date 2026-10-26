@@ -100,7 +100,7 @@ def patch_app(source_root: Path) -> None:
     # top-level class instead; that keeps it module-scoped on both platforms.
     import re
     if "_instagram_download_all_folder(" not in text:
-        class_match = re.search(r"(?m)^class\\s+[A-Za-z_]\\w*\\s*(?:\\([^\\n]*\\))?:", text)
+        class_match = re.search(r"(?m)^class\s+[A-Za-z_]\w*\s*(?:\([^\n]*\))?:", text)
         if not class_match:
             raise RuntimeError("Could not find a top-level application class for the Instagram helper.")
         position = class_match.start()
