@@ -387,6 +387,57 @@ def patch_core(source_root: Path) -> None:
     print("Facebook Post photo fallback inserted; core.py syntax check passed.")
 
 
+
+FACEBOOK_POST_FALLBACK_APP_HELPER = r'''
+def _analyze_url_with_facebook_post_fallback(url: str, cookie_browser: str | None = "auto"):
+    """Try the primary extractor, then use the local-session Facebook Post fallback."""
+    from urllib.parse import urlparse
+
+    try:
+        return analyze_url(url, cookie_browser)
+    except Exception as primary_error:
+        parsed = urlparse((url or "").strip())
+        normalized_url = (parsed.path + "?" + parsed.query).lower()
+        if "pfbid" in normalized_url or "/share/p/" in normalized_url:
+            from core import analyze_facebook_post
+            try:
+                return analyze_facebook_post(url, cookie_browser)
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    "Facebook Post tidak berhasil dianalisis melalui ekstraksi utama maupun fallback.\\n"
+                    f"Ekstraksi utama: {primary_error}\\n"
+                    f"Fallback Facebook Post: {fallback_error}"
+                ) from fallback_error
+        raise
+
+
+'''
+
+
+def patch_app(source_root: Path) -> None:
+    path = source_root / "app.py"
+    text = path.read_text(encoding="utf-8")
+
+    if "_analyze_url_with_facebook_post_fallback(" not in text:
+        import re
+        class_match = re.search(r"(?m)^class\s+[A-Za-z_]\w*\s*(?:\([^\n]*\))?:", text)
+        if not class_match:
+            raise RuntimeError("Could not find a top-level application class for Facebook Post fallback.")
+        position = class_match.start()
+        text = text[:position] + FACEBOOK_POST_FALLBACK_APP_HELPER + text[position:]
+
+    text = replace_once(
+        text,
+        "self.done.emit(analyze_url(self.url, self.cookie_browser))",
+        "self.done.emit(_analyze_url_with_facebook_post_fallback(self.url, self.cookie_browser))",
+        "route analysis through Facebook Post fallback",
+    )
+
+    compile(text, str(path), "exec")
+    path.write_text(text, encoding="utf-8")
+    print("Facebook Post fallback integrated into the Windows analyzer; app.py syntax check passed.")
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         raise SystemExit("Usage: patch_windows_facebook_post.py SOURCE_ROOT")
@@ -394,6 +445,7 @@ def main() -> None:
     if not source_root.is_dir():
         raise FileNotFoundError(f"Source root not found: {source_root}")
     patch_core(source_root)
+    patch_app(source_root)
 
 
 if __name__ == "__main__":
