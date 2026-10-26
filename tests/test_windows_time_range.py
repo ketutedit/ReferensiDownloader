@@ -27,6 +27,7 @@ def main() -> None:
         suffix = ".exe" if os.name == "nt" else ""
         candidates = [
             binary_dir / (name + suffix),
+            root / "bin" / (name + suffix),
             root / "vendor" / (name + suffix),
             root / (name + suffix),
         ]
