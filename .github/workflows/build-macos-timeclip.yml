@@ -66,6 +66,7 @@ jobs:
           python "$GITHUB_WORKSPACE/patches/patch_mac_isolated_story_engine.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_mac_facebook_story.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_mac_facebook_post.py" "$SOURCE_ROOT"
+          python "$GITHUB_WORKSPACE/patches/patch_mac_facebook_mixed_post.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_mac_instagram_download_all.py" "$SOURCE_ROOT"
           python "$GITHUB_WORKSPACE/patches/patch_mac_story_diagnostics.py" "$SOURCE_ROOT"
           python -m py_compile "$SOURCE_ROOT/core.py" "$SOURCE_ROOT/app.py"
