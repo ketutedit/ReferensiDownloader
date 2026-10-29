@@ -322,8 +322,9 @@ def _browser_profile_candidates(browser: str) -> list[str | None]:
     return (
         "Instagram belum mengembalikan media. Aplikasi sudah mencoba sesi browser dan profile yang tersedia. "
         "Jika akunmu login di Chrome, pilih Chrome secara langsung pada menu Website Login lalu Analyze lagi. "
-        "Pastikan Chrome dapat membuka media tersebut. Jika cookie Chrome tetap tidak bisa dibaca, versi berikutnya "
-        "perlu memakai file cookies.txt yang diekspor lokal dari Chrome.\\n\\n" + detail_text
+        "Pastikan Chrome dapat membuka media tersebut. Jika tetap gagal, klik tombol Import cookies.txt pada baris Website Login, "
+        "pilih file cookies.txt format Netscape yang diekspor dari browser yang sudah login, lalu Analyze lagi. "
+        "Jangan bagikan file cookie kepada siapa pun. Postingan privat hanya bisa dibuka jika akun tersebut memang punya akses.\\n\\n" + detail_text
     )
 ''',
         "deduplicate and clarify browser errors",

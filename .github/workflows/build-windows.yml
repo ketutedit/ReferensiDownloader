@@ -69,6 +69,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Facebook mixed photo/video patch failed." }
           python "$env:GITHUB_WORKSPACE\patches\patch_windows_instagram_download_all.py" "$env:SOURCE_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "Instagram Download All folder patch failed." }
+          python "$env:GITHUB_WORKSPACE\patches\patch_windows_tiktok_photos.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "TikTok Photo/Carousel patch failed." }
           python -m py_compile "$env:SOURCE_ROOT\core.py" "$env:SOURCE_ROOT\app.py"
           if ($LASTEXITCODE -ne 0) { throw "Python syntax check failed." }
 
@@ -112,6 +114,12 @@ jobs:
         run: |
           & "$env:TEST_PYTHON" "$env:GITHUB_WORKSPACE\tests\test_instagram_download_folders.py" "$env:SOURCE_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "Instagram Download All regression test failed." }
+
+      - name: Test TikTok Photo/Carousel analysis and routing
+        shell: pwsh
+        run: |
+          & "$env:TEST_PYTHON" "$env:GITHUB_WORKSPACE\tests\test_windows_tiktok_photo.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "TikTok Photo/Carousel regression test failed." }
 
       - name: Upload Windows build artifact
         uses: actions/upload-artifact@v4
