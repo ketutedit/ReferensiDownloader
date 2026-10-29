@@ -59,6 +59,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Instagram compatibility patch failed." }
           python "$env:GITHUB_WORKSPACE\patches\patch_windows_cookiefile.py" "$env:SOURCE_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "cookies.txt fallback patch failed." }
+          python "$env:GITHUB_WORKSPACE\patches\patch_windows_instagram_story_engine.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Instagram Story engine patch failed." }
           python "$env:GITHUB_WORKSPACE\patches\patch_windows_time_range.py" "$env:SOURCE_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "Time Range segment patch failed." }
           python "$env:GITHUB_WORKSPACE\patches\patch_windows_facebook_story.py" "$env:SOURCE_ROOT"
@@ -96,6 +98,12 @@ jobs:
         run: |
           & "$env:TEST_PYTHON" "$env:GITHUB_WORKSPACE\tests\test_windows_time_range.py" "$env:SOURCE_ROOT"
           if ($LASTEXITCODE -ne 0) { throw "Time Range regression test failed." }
+
+      - name: Test Windows Instagram Story engine
+        shell: pwsh
+        run: |
+          & "$env:TEST_PYTHON" "$env:GITHUB_WORKSPACE\tests\test_windows_instagram_story_engine.py" "$env:SOURCE_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "Instagram Story engine regression test failed." }
 
       - name: Test Facebook Story media parsing
         shell: pwsh
